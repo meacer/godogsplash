@@ -59,7 +59,7 @@ func _iptables_check_mark_masking() {
 func do_command(cmd string) int {
 	out, err := exec.Command("sh", "-c", "iptables "+cmd).Output()
 	if err != nil {
-		fmt.Printf("IptablesDoCommand error: %v\n", err)
+		fmt.Printf("IptablesDoCommand error: %v, cmd: %v\n", err, cmd)
 		return 1
 	}
 	if out != nil {
@@ -109,10 +109,10 @@ func main() {
 	iptables_do_command("-t mangle -N " + CHAIN_INCOMING) /* for counting incoming packets */
 	iptables_do_command("-t mangle -N " + CHAIN_OUTGOING) /* for marking authenticated packets, and for counting outgoing packets */
 	// Assign jumps to these new chains.
-	iptables_do_command("-t mangle -I PREROUTING 1 -i %s -s %s -j ", CHAIN_OUTGOING, gw_interface, gw_iprange)
-	iptables_do_command("-t mangle -I PREROUTING 2 -i %s -s %s -j ", CHAIN_BLOCKED, gw_interface, gw_iprange)
-	iptables_do_command("-t mangle -I PREROUTING 3 -i %s -s %s -j ", CHAIN_TRUSTED, gw_interface, gw_iprange)
-	iptables_do_command("-t mangle -I POSTROUTING 1 -o %s -d %s -j ", CHAIN_INCOMING, gw_interface, gw_iprange)
+	iptables_do_command("-t mangle -I PREROUTING 1 -i %s -s %s -j "+CHAIN_OUTGOING, gw_interface, gw_iprange)
+	iptables_do_command("-t mangle -I PREROUTING 2 -i %s -s %s -j "+CHAIN_BLOCKED, gw_interface, gw_iprange)
+	iptables_do_command("-t mangle -I PREROUTING 3 -i %s -s %s -j "+CHAIN_TRUSTED, gw_interface, gw_iprange)
+	iptables_do_command("-t mangle -I POSTROUTING 1 -o %s -d %s -j "+CHAIN_INCOMING, gw_interface, gw_iprange)
 
 	/* Rules to mark as trusted MAC address packets in mangle PREROUTING */
 	//for (; pt != NULL; pt = pt->next) {
