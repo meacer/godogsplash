@@ -5,6 +5,7 @@ import (
 	"log"
 	"net/http"
 	"os/exec"
+	"strings"
 	"time"
 )
 
@@ -329,7 +330,8 @@ func HelloAction(w http.ResponseWriter, req *http.Request) {
 }
 
 func AuthAction(w http.ResponseWriter, req *http.Request) {
-	client_ip := req.RemoteAddr
+	// req.RemoteAddr is in the form of ip:port. Trim the port.
+	client_ip := req.RemoteAddr[:strings.LastIndex(req.RemoteAddr, ":")]
 	client_mac := arp_get(client_ip)
 	client_idx := 1
 	iptables_fw_access(Client{client_ip, client_mac, client_idx})
