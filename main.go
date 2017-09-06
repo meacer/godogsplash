@@ -66,10 +66,11 @@ func do_command(cmd string) int {
 		fmt.Printf("IptablesDoCommand error: %v, cmd: %v\n", err, cmd)
 		return 1
 	}
-	if out != nil {
+	if out != nil && len(out) != 0 {
 		fmt.Printf("IptablesDoCommand result nonzero, value: %v\n", out)
 		return 1
 	}
+	fmt.Printf("%v OK\n", cmd)
 	return 0
 }
 
@@ -312,8 +313,8 @@ const (
 	AuthAction_Deauth
 )
 
-func iptables_fw_access(client Client) {
-	log.Println("Authenticating %v %v", client.ip, client.mac)
+func iptables_fw_access(client Client) int {
+	log.Printf("Authenticating %v %v\n", client.ip, client.mac)
 	rc := 0
 	/* This rule is for marking upload (outgoing) packets, and for upload byte counting */
 	rc |= iptables_do_command("-t mangle -A "+CHAIN_OUTGOING+" -s %s -m mac --mac-source %s -j MARK %s 0x%x%x", client.ip, client.mac, markop, client.idx+10, FW_MARK_AUTHENTICATED)
@@ -321,6 +322,7 @@ func iptables_fw_access(client Client) {
 
 	/* This rule is just for download (incoming) byte counting, see iptables_fw_counters_update() */
 	rc |= iptables_do_command("-t mangle -A "+CHAIN_INCOMING+" -d %s -j ACCEPT", client.ip)
+	return rc
 }
 
 func HelloAction(w http.ResponseWriter, req *http.Request) {
@@ -330,15 +332,19 @@ func HelloAction(w http.ResponseWriter, req *http.Request) {
 }
 
 func AuthAction(w http.ResponseWriter, req *http.Request) {
+	w.Header().Set("Content-Type", "text/html")
+	w.Write([]byte(fmt.Sprintf("%v\n", time.Now())))
+
 	// req.RemoteAddr is in the form of ip:port. Trim the port.
 	client_ip := req.RemoteAddr[:strings.LastIndex(req.RemoteAddr, ":")]
 	client_mac := arp_get(client_ip)
 	client_idx := 1
-	iptables_fw_access(Client{client_ip, client_mac, client_idx})
+	if iptables_fw_access(Client{client_ip, client_mac, client_idx}) != 0 {
+		w.Write([]byte(fmt.Sprintf("NOT Authenticated %v\n", client_ip)))
+		return
+	}
 
-	w.Header().Set("Content-Type", "text/html")
 	w.Write([]byte(fmt.Sprintf("Authenticated %v\n", client_ip)))
-	w.Write([]byte(fmt.Sprintf("%v", time.Now())))
 }
 
 func main() {
