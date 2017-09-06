@@ -340,7 +340,7 @@ func AuthAction(w http.ResponseWriter, req *http.Request) {
 }
 
 func main() {
-	//iptables_init()
+	iptables_init()
 	log.Println("Initialized iptables rules")
 
 	http.HandleFunc("/", HelloAction)
