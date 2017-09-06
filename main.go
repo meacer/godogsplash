@@ -2,7 +2,10 @@ package main
 
 import (
 	"fmt"
+	"log"
+	"net/http"
 	"os/exec"
+	"time"
 )
 
 var (
@@ -70,7 +73,7 @@ func do_command(cmd string) int {
 }
 
 func iptables_do_command(format string, a ...interface{}) int {
-	cmd := fmt.Sprintf(format, a)
+	cmd := fmt.Sprintf(format, a...)
 	return do_command("iptables " + cmd)
 }
 
@@ -88,7 +91,7 @@ func FirewallInit() {
 	_iptables_check_mark_masking()
 }
 
-func main() {
+func iptables_init() {
 	//iptables.getIPTablesHasCheckCommand("test")
 
 	gw_interface := "wlan0"
@@ -295,4 +298,53 @@ func main() {
 	 * End of filter table chains and rules
 	 **************************************
 	 */
+}
+
+type Client struct {
+	ip  string
+	mac string
+	idx int
+}
+
+const (
+	AuthAction_Auth int = iota
+	AuthAction_Deauth
+)
+
+func iptables_fw_access(client Client) {
+	log.Println("Authenticating %v %v", client.ip, client.mac)
+	rc := 0
+	/* This rule is for marking upload (outgoing) packets, and for upload byte counting */
+	rc |= iptables_do_command("-t mangle -A "+CHAIN_OUTGOING+" -s %s -m mac --mac-source %s -j MARK %s 0x%x%x", client.ip, client.mac, markop, client.idx+10, FW_MARK_AUTHENTICATED)
+	rc |= iptables_do_command("-t mangle -A "+CHAIN_INCOMING+" -d %s -j MARK %s 0x%x%x", client.ip, markop, client.idx+10, FW_MARK_AUTHENTICATED)
+
+	/* This rule is just for download (incoming) byte counting, see iptables_fw_counters_update() */
+	rc |= iptables_do_command("-t mangle -A "+CHAIN_INCOMING+" -d %s -j ACCEPT", client.ip)
+}
+
+func HelloAction(w http.ResponseWriter, req *http.Request) {
+	w.Header().Set("Content-Type", "text/html")
+	w.Write([]byte("Hello, world\n"))
+	w.Write([]byte(fmt.Sprintf("%v", time.Now())))
+}
+
+func AuthAction(w http.ResponseWriter, req *http.Request) {
+	client_ip := req.RemoteAddr
+	client_mac := arp_get(client_ip)
+	client_idx := 1
+	iptables_fw_access(Client{client_ip, client_mac, client_idx})
+
+	w.Header().Set("Content-Type", "text/html")
+	w.Write([]byte(fmt.Sprintf("Authenticated %v\n", client_ip)))
+	w.Write([]byte(fmt.Sprintf("%v", time.Now())))
+}
+
+func main() {
+	//iptables_init()
+	log.Println("Initialized iptables rules")
+
+	http.HandleFunc("/", HelloAction)
+	http.HandleFunc("/auth", AuthAction)
+	http.ListenAndServe(":2050", nil)
+	log.Println("Started web server")
 }
