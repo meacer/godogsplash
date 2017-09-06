@@ -57,7 +57,7 @@ func _iptables_check_mark_masking() {
 }
 
 func do_command(cmd string) int {
-	out, err := exec.Command("sh", "-c", "iptables "+cmd).Output()
+	out, err := exec.Command("sh", "-c", cmd).Output()
 	if err != nil {
 		fmt.Printf("IptablesDoCommand error: %v, cmd: %v\n", err, cmd)
 		return 1
@@ -71,7 +71,7 @@ func do_command(cmd string) int {
 
 func iptables_do_command(format string, a ...interface{}) int {
 	cmd := fmt.Sprintf(format, a)
-	return do_command(cmd)
+	return do_command("iptables " + cmd)
 }
 
 func is_empty_ruleset(ruleset string) bool {
