@@ -107,7 +107,7 @@ func get_empty_ruleset_policy(ruleset string) string {
 		return "ACCEPT"
 	}
 	panic(fmt.Sprintf("Invalid ruleset name: %v", ruleset))
-	return false
+	return ""
 }
 
 func _iptables_append_ruleset(table string, ruleset string, chain string) int {
