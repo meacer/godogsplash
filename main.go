@@ -113,9 +113,77 @@ func get_empty_ruleset_policy(ruleset string) string {
 	return ""
 }
 
+func _iptables_compile(table string, chain string, rule FirewallRule) string {
+	mode := ""
+	switch rule.target {
+	case TARGET_DROP:
+		mode = "DROP"
+	case TARGET_REJECT:
+		mode = "REJECT"
+	case TARGET_ACCEPT:
+		mode = "ACCEPT"
+	case TARGET_LOG:
+		mode = "LOG"
+	case TARGET_ULOG:
+		mode = "ULOG"
+	}
+
+	command := fmt.Sprintf("-t %s -A %s ", table, chain)
+	if rule.mask != "" {
+		command = fmt.Sprintf("%s -d %s", command, rule.mask)
+	}
+	if rule.protocol != "" {
+		command = fmt.Sprintf("%s -p %s", command, rule.protocol)
+	}
+	if rule.port != "" {
+		command = fmt.Sprintf("%s --dport %s", command, rule.port)
+	}
+	if rule.ipset != "" {
+		command = fmt.Sprintf("%s -m set --match-set %s dst", command, rule.ipset)
+	}
+	command = fmt.Sprintf("%s -j%s", command, mode)
+	return command
+}
+
 func _iptables_append_ruleset(table string, ruleset string, chain string) int {
-	// TODO: Implement
-	return 0
+	// TODO: Implement.
+	rules := []FirewallRule{}
+	if ruleset == "users-to-router" {
+		rules = []FirewallRule{
+			FirewallRule{TARGET_ACCEPT, "udp", "53", "0.0.0.0/0", ""},
+			FirewallRule{TARGET_ACCEPT, "tcp", "53", "0.0.0.0/0", ""},
+			FirewallRule{TARGET_ACCEPT, "udp", "67", "0.0.0.0/0", ""},
+			// TODO: Remove:
+			FirewallRule{TARGET_ACCEPT, "tcp", "22", "0.0.0.0/0", ""},
+			FirewallRule{TARGET_ACCEPT, "tcp", "80", "0.0.0.0/0", ""},
+			FirewallRule{TARGET_ACCEPT, "tcp", "443", "0.0.0.0/0", ""},
+		}
+	} else if ruleset == "authenticated-users" {
+		rules = []FirewallRule{
+			FirewallRule{TARGET_REJECT, "" /* protocol */, "" /* port */, "192.168.0.0/16", ""},
+			FirewallRule{TARGET_REJECT, "" /* protocol */, "" /* port */, "10.0.0.0/8", ""},
+			FirewallRule{TARGET_ACCEPT, "tcp" /* protocol */, "53" /* port */, "0.0.0.0/0", ""},
+			FirewallRule{TARGET_ACCEPT, "udp" /* protocol */, "53" /* port */, "0.0.0.0/0", ""},
+			FirewallRule{TARGET_ACCEPT, "tcp" /* protocol */, "80" /* port */, "0.0.0.0/0", ""},
+			// TODO: Remove:
+			FirewallRule{TARGET_ACCEPT, "tcp" /* protocol */, "443" /* port */, "0.0.0.0/0", ""},
+			FirewallRule{TARGET_ACCEPT, "tcp" /* protocol */, "22" /* port */, "0.0.0.0/0", ""},
+		}
+	} else if ruleset == "preauthenticated-users" {
+		rules = []FirewallRule{
+			FirewallRule{TARGET_ACCEPT, "tcp" /* protocol */, "53" /* port */, "0.0.0.0/0", ""},
+			FirewallRule{TARGET_ACCEPT, "udp" /* protocol */, "53" /* port */, "0.0.0.0/0", ""},
+		}
+	} else {
+		panic("Invalid ruleset: " + ruleset)
+	}
+  ret := 0
+	for _, rule := range rules {
+		cmd := _iptables_compile(table, chain, rule)
+		fmt.Printf("Loading rule \"%s\" into table %s, chain %s\n", cmd, table, chain)
+		ret |= iptables_do_command(cmd)
+	}
+	return ret
 }
 
 func FirewallInit() {
