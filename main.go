@@ -41,36 +41,15 @@ func _iptables_init_marks() {
 	FW_MARK_MASK = FW_MARK_BLOCKED | FW_MARK_TRUSTED | FW_MARK_AUTHENTICATED
 }
 
-func _iptables_check_mark_masking() {
-	/* See if kernel supports mark or-ing */
-	if 0 == iptables_do_command("-t mangle -I PREROUTING 1 -j MARK --or-mark 0x%x", FW_MARK_BLOCKED) {
-		iptables_do_command("-t mangle -D PREROUTING 1") /* delete test rule we just inserted */
-		fmt.Printf("Kernel supports --or-mark.\n")
-		markop = "--or-mark"
-	} else {
-		fmt.Printf("Kernel does not support iptables --or-mark.  Using --set-mark instead.\n")
-		markop = "--set-mark"
-	}
-
-	/* See if kernel supports mark masking */
-	if 0 == iptables_do_command("-t filter -I FORWARD 1 -m mark --mark 0x%x/0x%x -j REJECT", FW_MARK_BLOCKED, FW_MARK_MASK) {
-		iptables_do_command("-t filter -D FORWARD 1") /* delete test rule we just inserted */
-		fmt.Printf("Kernel supports mark masking.\n")
-		markmask = fmt.Sprintf("/0x%x", FW_MARK_MASK)
-	} else {
-		fmt.Printf("Kernel does not support iptables mark masking.  Using empty mask.\n")
-		markmask = ""
-	}
-}
-
 func do_command(cmd string) int {
+	fmt.Printf("Running command: %v\n", cmd)
 	out, err := exec.Command("sh", "-c", cmd).Output()
 	if err != nil {
-		fmt.Printf("IptablesDoCommand error: %v, cmd: %v\n", err, cmd)
+		fmt.Printf("DoCommand error: %v, cmd: %v\n", err, cmd)
 		return 1
 	}
 	if out != nil && len(out) != 0 {
-		fmt.Printf("IptablesDoCommand result nonzero, value: %v\n", out)
+		fmt.Printf("DoCommand result nonzero, value: %v\n", out)
 		return 1
 	}
 	fmt.Printf("%v OK\n", cmd)
@@ -79,7 +58,11 @@ func do_command(cmd string) int {
 
 func iptables_do_command(format string, a ...interface{}) int {
 	cmd := fmt.Sprintf(format, a...)
-	return do_command("iptables " + cmd)
+	rc := do_command("iptables --wait " + cmd)
+	if rc != 0 {
+		panic(fmt.Sprintf("Failed to run iptables command, return code: %v", rc))
+	}
+	return rc
 }
 
 func is_empty_ruleset(ruleset string) bool {
@@ -100,6 +83,28 @@ func is_empty_ruleset(ruleset string) bool {
 	}
 	panic(fmt.Sprintf("Invalid ruleset name: %v", ruleset))
 	return false
+}
+
+func _iptables_check_mark_masking() {
+	/* See if kernel supports mark or-ing */
+	if 0 == iptables_do_command("-t mangle -I PREROUTING 1 -j MARK --or-mark 0x%x", FW_MARK_BLOCKED) {
+		iptables_do_command("-t mangle -D PREROUTING 1") /* delete test rule we just inserted */
+		fmt.Printf("Kernel supports --or-mark.\n")
+		markop = "--or-mark"
+	} else {
+		fmt.Printf("Kernel does not support iptables --or-mark.  Using --set-mark instead.\n")
+		markop = "--set-mark"
+	}
+
+	/* See if kernel supports mark masking */
+	if 0 == iptables_do_command("-t filter -I FORWARD 1 -m mark --mark 0x%x/0x%x -j REJECT", FW_MARK_BLOCKED, FW_MARK_MASK) {
+		iptables_do_command("-t filter -D FORWARD 1") /* delete test rule we just inserted */
+		fmt.Printf("Kernel supports mark masking.\n")
+		markmask = fmt.Sprintf("/0x%x", FW_MARK_MASK)
+	} else {
+		fmt.Printf("Kernel does not support iptables mark masking.  Using empty mask.\n")
+		markmask = ""
+	}
 }
 
 func get_empty_ruleset_policy(ruleset string) string {
@@ -177,7 +182,7 @@ func _iptables_append_ruleset(table string, ruleset string, chain string) int {
 	} else {
 		panic("Invalid ruleset: " + ruleset)
 	}
-  ret := 0
+	ret := 0
 	for _, rule := range rules {
 		cmd := _iptables_compile(table, chain, rule)
 		fmt.Printf("Loading rule \"%s\" into table %s, chain %s\n", cmd, table, chain)
@@ -412,7 +417,7 @@ const (
 )
 
 func iptables_fw_access(client Client) int {
-	log.Printf("Authenticating %v %v\n", client.ip, client.mac)
+	log.Printf("Authenticating %v %v %v\n", client.ip, client.mac, client.idx)
 	rc := 0
 	/* This rule is for marking upload (outgoing) packets, and for upload byte counting */
 	rc |= iptables_do_command("-t mangle -A "+CHAIN_OUTGOING+" -s %s -m mac --mac-source %s -j MARK %s 0x%x%x", client.ip, client.mac, markop, client.idx+10, FW_MARK_AUTHENTICATED)
@@ -437,12 +442,11 @@ func AuthAction(w http.ResponseWriter, req *http.Request) {
 	client_ip := req.RemoteAddr[:strings.LastIndex(req.RemoteAddr, ":")]
 	client_mac := arp_get(client_ip)
 	client_idx := 1
-	if iptables_fw_access(Client{client_ip, client_mac, client_idx}) != 0 {
-		w.Write([]byte(fmt.Sprintf("NOT Authenticated %v\n", client_ip)))
+	if iptables_fw_access(Client{client_ip, client_mac, client_idx}) == 0 {
+		w.Write([]byte(fmt.Sprintf("Authenticated %v\n", client_ip)))
 		return
 	}
-
-	w.Write([]byte(fmt.Sprintf("Authenticated %v\n", client_ip)))
+	w.Write([]byte(fmt.Sprintf("NOT Authenticated %v\n", client_ip)))
 }
 
 func main() {
