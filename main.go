@@ -80,7 +80,34 @@ func iptables_do_command(format string, a ...interface{}) int {
 }
 
 func is_empty_ruleset(ruleset string) bool {
-	return true
+	if ruleset == "trusted-users-to-router" {
+		return true
+	}
+	if ruleset == "users-to-router" {
+		return false
+	}
+	if ruleset == "trusted-users" {
+		return true
+	}
+	if ruleset == "authenticated-users" {
+		return false
+	}
+	if ruleset == "preauthenticated-users" {
+		return false
+	}
+	panic(fmt.Sprintf("Invalid ruleset name: %v", ruleset))
+	return false
+}
+
+func get_empty_ruleset_policy(ruleset string) string {
+	if ruleset == "trusted-users-to-router" {
+		return "ACCEPT"
+	}
+	if ruleset == "trusted-users" {
+		return "ACCEPT"
+	}
+	panic(fmt.Sprintf("Invalid ruleset name: %v", ruleset))
+	return false
 }
 
 func _iptables_append_ruleset(table string, ruleset string, chain string) int {
@@ -189,7 +216,7 @@ func iptables_init() {
 	 */
 	if is_empty_ruleset("trusted-users-to-router") {
 		// TODO: Implement
-		//rc |= iptables_do_command("-t filter -A " + CHAIN_TO_ROUTER + " -m mark --mark 0x%x%s -j %s", FW_MARK_TRUSTED, markmask, get_empty_ruleset_policy("trusted-users-to-router"));
+		rc |= iptables_do_command("-t filter -A "+CHAIN_TO_ROUTER+" -m mark --mark 0x%x%s -j %s", FW_MARK_TRUSTED, markmask, get_empty_ruleset_policy("trusted-users-to-router"))
 	} else {
 		rc |= iptables_do_command("-t filter -A "+CHAIN_TO_ROUTER+" -m mark --mark 0x%x%s -j "+CHAIN_TRUSTED_TO_ROUTER, FW_MARK_TRUSTED, markmask)
 		/* CHAIN_TRUSTED_TO_ROUTER, related and established packets  ACCEPT */
@@ -209,7 +236,7 @@ func iptables_init() {
 	 */
 	if is_empty_ruleset("users-to-router") {
 		// TODO: Implement
-		//rc |= iptables_do_command("-t filter -A " + CHAIN_TO_ROUTER + " -j %s", get_empty_ruleset_policy("users-to-router"));
+		rc |= iptables_do_command("-t filter -A "+CHAIN_TO_ROUTER+" -j %s", get_empty_ruleset_policy("users-to-router"))
 	} else {
 		/* CHAIN_TO_ROUTER, append the "users-to-router" ruleset */
 		rc |= _iptables_append_ruleset("filter", "users-to-router", CHAIN_TO_ROUTER)
@@ -249,7 +276,7 @@ func iptables_init() {
 	 */
 	if is_empty_ruleset("trusted-users") {
 		// TODO: Implement
-		//rc |= iptables_do_command("-t filter -A " +CHAIN_TO_INTERNET +" -m mark --mark 0x%x%s -j %s", FW_MARK_TRUSTED, markmask, get_empty_ruleset_policy("trusted-users"));
+		rc |= iptables_do_command("-t filter -A "+CHAIN_TO_INTERNET+" -m mark --mark 0x%x%s -j %s", FW_MARK_TRUSTED, markmask, get_empty_ruleset_policy("trusted-users"))
 	} else {
 		rc |= iptables_do_command("-t filter -A "+CHAIN_TO_INTERNET+" -m mark --mark 0x%x%s -j "+CHAIN_TRUSTED, FW_MARK_TRUSTED, markmask)
 		/* CHAIN_TRUSTED, related and established packets  ACCEPT */
@@ -269,7 +296,7 @@ func iptables_init() {
 	 */
 	if is_empty_ruleset("authenticated-users") {
 		// TODO: Implement
-		//rc |= iptables_do_command("-t filter -A " + CHAIN_TO_INTERNET + " -m mark --mark 0x%x%s -j %s", FW_MARK_AUTHENTICATED, markmask, get_empty_ruleset_policy("authenticated-users"));
+		rc |= iptables_do_command("-t filter -A "+CHAIN_TO_INTERNET+" -m mark --mark 0x%x%s -j %s", FW_MARK_AUTHENTICATED, markmask, get_empty_ruleset_policy("authenticated-users"))
 	} else {
 		rc |= iptables_do_command("-t filter -A "+CHAIN_TO_INTERNET+" -m mark --mark 0x%x%s -j "+CHAIN_AUTHENTICATED, FW_MARK_AUTHENTICATED, markmask)
 		/* CHAIN_AUTHENTICATED, related and established packets  ACCEPT */
@@ -289,7 +316,7 @@ func iptables_init() {
 	 */
 	if is_empty_ruleset("preauthenticated-users") {
 		// TODO: Implement
-		//rc |= iptables_do_command("-t filter -A "  + CHAIN_TO_INTERNET + " -j %s ",  get_empty_ruleset_policy("preauthenticated-users"));
+		rc |= iptables_do_command("-t filter -A "+CHAIN_TO_INTERNET+" -j %s ", get_empty_ruleset_policy("preauthenticated-users"))
 	} else {
 		rc |= _iptables_append_ruleset("filter", "preauthenticated-users", CHAIN_TO_INTERNET)
 	}
