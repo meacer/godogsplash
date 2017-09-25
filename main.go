@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"os/exec"
 	"strings"
 	"time"
@@ -449,12 +450,38 @@ func AuthAction(w http.ResponseWriter, req *http.Request) {
 	w.Write([]byte(fmt.Sprintf("NOT Authenticated %v\n", client_ip)))
 }
 
+func FileExists(path string) bool {
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		return true
+	}
+	return false
+}
+
 func main() {
 	iptables_init()
 	log.Println("Initialized iptables rules")
 
 	http.HandleFunc("/", HelloAction)
 	http.HandleFunc("/auth", AuthAction)
-	http.ListenAndServe(":2050", nil)
-	log.Println("Started web server")
+
+	run_https := true
+	if !FileExists("ssl/cert.pem") {
+		log.Println("ssl/cert.pem doesn't exist, not running HTTPS server")
+		run_https = false
+	}
+	if !FileExists("ssl/key.pem") {
+		log.Println("ssl/key.pem doesn't exist, not running HTTPS server")
+		run_https = false
+	}
+	if run_https {
+		log.Println("Starting HTTPS server at port 2051")
+		go http.ListenAndServeTLS(":2051", "cert.pem", "key.pem", nil)
+	}
+	log.Println("Starting HTTP server at port 2050")
+	err := http.ListenAndServe(":2050", nil)
+	if err != nil {
+		fmt.Printf("Could not start web server: %v\n", err)
+		return
+	}
+	log.Println("Started")
 }
