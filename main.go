@@ -431,8 +431,12 @@ func iptables_fw_access(client Client) int {
 
 func HelloAction(w http.ResponseWriter, req *http.Request) {
 	w.Header().Set("Content-Type", "text/html")
-	w.Write([]byte("Hello, world\n"))
+	w.Write([]byte("Hello, world<br>\n"))
 	w.Write([]byte(fmt.Sprintf("%v", time.Now())))
+}
+
+func RedirectAction(w http.ResponseWriter, req *http.Request) {
+	http.Redirect(w, req, "https://192.168.24.1:2051", 301)
 }
 
 func AuthAction(w http.ResponseWriter, req *http.Request) {
@@ -461,7 +465,8 @@ func main() {
 	iptables_init()
 	log.Println("Initialized iptables rules")
 
-	http.HandleFunc("/", HelloAction)
+	//http.HandleFunc("/", HelloAction)
+	http.HandleFunc("/", RedirectAction)
 	http.HandleFunc("/auth", AuthAction)
 
 	run_https := true
