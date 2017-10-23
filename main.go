@@ -1,6 +1,7 @@
 package main
 
 import (
+	"crypto/tls"
 	"fmt"
 	"log"
 	"net/http"
@@ -435,8 +436,25 @@ func HelloAction(w http.ResponseWriter, req *http.Request) {
 	w.Write([]byte(fmt.Sprintf("%v", time.Now())))
 }
 
+type HelloHandler struct{}
+
+func (h HelloHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/html")
+	w.Write([]byte("Hello, world<br>\n"))
+	w.Write([]byte(fmt.Sprintf("%v", time.Now())))
+}
+
+type RedirectHandler struct{}
+
+func (h RedirectHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	http.Redirect(w, r, "https://192.168.24.1:2051/", 301)
+	w.Header().Set("Content-Type", "text/html")
+	w.Write([]byte("Redirected<br>\n"))
+	w.Write([]byte(fmt.Sprintf("%v", time.Now())))
+}
+
 func RedirectAction(w http.ResponseWriter, req *http.Request) {
-	http.Redirect(w, req, "https://192.168.24.1:2051", 301)
+	http.Redirect(w, req, "https://192.168.24.1:2051/", 301)
 }
 
 func AuthAction(w http.ResponseWriter, req *http.Request) {
@@ -461,6 +479,23 @@ func FileExists(path string) bool {
 	return false
 }
 
+func RunHttpsServer() {
+	cfg := &tls.Config{}
+	cert, err := tls.LoadX509KeyPair("cert.pem", "key.pem")
+	if err != nil {
+		log.Fatal(err)
+	}
+	cfg.Certificates = append(cfg.Certificates, cert)
+	cfg.BuildNameToCertificate()
+
+	https_server := http.Server{
+		Addr:      "2051",
+		Handler:   HelloHandler{},
+		TLSConfig: cfg,
+	}
+	https_server.ListenAndServeTLS("", "")
+}
+
 func main() {
 	iptables_init()
 	log.Println("Initialized iptables rules")
@@ -478,14 +513,20 @@ func main() {
 		log.Println("ssl/key.pem doesn't exist, not running HTTPS server")
 		run_https = false
 	}
+
 	if run_https {
 		log.Println("Starting HTTPS server at port 2051")
-		go http.ListenAndServeTLS(":2051", "cert.pem", "key.pem", nil)
+		go RunHttpsServer()
 	}
+
 	log.Println("Starting HTTP server at port 2050")
-	err := http.ListenAndServe(":2050", nil)
+	server := http.Server{
+		Addr:    ":2050",
+		Handler: RedirectHandler{},
+	}
+	err := server.ListenAndServe()
 	if err != nil {
-		fmt.Printf("Could not start web server: %v\n", err)
+		fmt.Printf("Could not start HTTP server: %v\n", err)
 		return
 	}
 	log.Println("Started")
