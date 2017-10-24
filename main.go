@@ -453,8 +453,12 @@ func (h RedirectHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte(fmt.Sprintf("%v", time.Now())))
 }
 
-func RedirectAction(w http.ResponseWriter, req *http.Request) {
-	http.Redirect(w, req, "https://192.168.24.1:2051/", 301)
+func RedirectAction(w http.ResponseWriter, r *http.Request) {
+	http.Redirect(w, r, "https://192.168.24.1:2051/", 301)
+}
+
+func DownloadCertAction(w http.ResponseWriter, r *http.Request) {
+	http.ServeFile(w, r, "ssl/cert.pem")
 }
 
 func AuthAction(w http.ResponseWriter, req *http.Request) {
@@ -489,11 +493,14 @@ func RunHttpsServer() {
 	cfg.BuildNameToCertificate()
 
 	https_server := http.Server{
-		Addr:      "2051",
+		Addr:      ":2051",
 		Handler:   HelloHandler{},
 		TLSConfig: cfg,
 	}
-	https_server.ListenAndServeTLS("", "")
+	err = https_server.ListenAndServeTLS("", "")
+	if err != nil {
+		fmt.Printf("Could not start HTTPS server: %v\n", err)
+	}
 }
 
 func main() {
@@ -501,8 +508,9 @@ func main() {
 	log.Println("Initialized iptables rules")
 
 	//http.HandleFunc("/", HelloAction)
-	http.HandleFunc("/", RedirectAction)
-	http.HandleFunc("/auth", AuthAction)
+	//http.HandleFunc("/", RedirectAction)
+	//http.HandleFunc("/auth", AuthAction)
+	http.HandleFunc("/cert", DownloadCertAction)
 
 	run_https := true
 	if !FileExists("ssl/cert.pem") {
