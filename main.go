@@ -485,7 +485,7 @@ func FileExists(path string) bool {
 
 func RunHttpsServer() {
 	cfg := &tls.Config{}
-	cert, err := tls.LoadX509KeyPair("ssl/cert.pem", "ssl/key.pem")
+	cert, err := tls.LoadX509KeyPair("ssl/cert.pem", "ssl/key_decrypted.pem")
 	if err != nil {
 		log.Fatal(err)
 	}
