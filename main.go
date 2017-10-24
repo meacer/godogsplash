@@ -448,6 +448,8 @@ type RedirectHandler struct{}
 
 func (h RedirectHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path == "/cert" {
+		w.Header().Set("Content-Type", "application/x-pem-file; charset=utf-8")
+		w.Header().Set("Content-Disposition", "attachment; filename=\"cert.pem\"")
 		http.ServeFile(w, r, "ssl/cert.pem")
 	} else {
 		http.Redirect(w, r, "https://192.168.24.1:2051/", 301)
@@ -459,6 +461,8 @@ func (h RedirectHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 func RedirectAction(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path == "/cert" {
+		w.Header().Set("Content-Type", "application/x-pem-file; charset=utf-8")
+		w.Header().Set("Content-Disposition", "attachment; filename=\"cert.pem\"")
 		http.ServeFile(w, r, "ssl/cert.pem")
 	} else {
 		http.Redirect(w, r, "https://192.168.24.1:2051/", 301)
