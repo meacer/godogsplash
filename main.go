@@ -454,7 +454,11 @@ func (h RedirectHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func RedirectAction(w http.ResponseWriter, r *http.Request) {
-	http.Redirect(w, r, "https://192.168.24.1:2051/", 301)
+	if r.URL.Path == "/cert" {
+		http.ServeFile(w, r, "ssl/cert.pem")
+	} else {
+		http.Redirect(w, r, "https://192.168.24.1:2051/", 301)
+	}
 }
 
 func DownloadCertAction(w http.ResponseWriter, r *http.Request) {
