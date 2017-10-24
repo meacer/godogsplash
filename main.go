@@ -430,12 +430,6 @@ func iptables_fw_access(client Client) int {
 	return rc
 }
 
-func HelloAction(w http.ResponseWriter, req *http.Request) {
-	w.Header().Set("Content-Type", "text/html")
-	w.Write([]byte("Hello, world<br>\n"))
-	w.Write([]byte(fmt.Sprintf("%v", time.Now())))
-}
-
 type HelloHandler struct{}
 
 func (h HelloHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -456,16 +450,6 @@ func (h RedirectHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html")
 		w.Write([]byte("Redirected<br>\n"))
 		w.Write([]byte(fmt.Sprintf("%v", time.Now())))
-	}
-}
-
-func RedirectAction(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Path == "/cert" {
-		w.Header().Set("Content-Type", "application/x-pem-file; charset=utf-8")
-		w.Header().Set("Content-Disposition", "attachment; filename=\"cert.pem\"")
-		http.ServeFile(w, r, "ssl/cert.pem")
-	} else {
-		http.Redirect(w, r, "https://192.168.24.1:2051/", 301)
 	}
 }
 
@@ -519,8 +503,6 @@ func main() {
 	iptables_init()
 	log.Println("Initialized iptables rules")
 
-	//http.HandleFunc("/", HelloAction)
-	//http.HandleFunc("/", RedirectAction)
 	//http.HandleFunc("/auth", AuthAction)
 	http.HandleFunc("/cert", DownloadCertAction)
 
