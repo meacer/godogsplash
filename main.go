@@ -1,12 +1,14 @@
 package main
 
 import (
+	"bufio"
 	"crypto/tls"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
 	"os/exec"
+	"os/signal"
 	"strings"
 	"time"
 )
@@ -44,7 +46,7 @@ func _iptables_init_marks() {
 }
 
 func do_command(cmd string) int {
-	fmt.Printf("Running command: %v\n", cmd)
+	fmt.Printf("# RUN:\n%v\n", cmd)
 	out, err := exec.Command("sh", "-c", cmd).Output()
 	if err != nil {
 		fmt.Printf("DoCommand error: %v, cmd: %v\n", err, cmd)
@@ -54,7 +56,6 @@ func do_command(cmd string) int {
 		fmt.Printf("DoCommand result nonzero, value: %v\n", out)
 		return 1
 	}
-	fmt.Printf("%v OK\n", cmd)
 	return 0
 }
 
@@ -62,7 +63,7 @@ func iptables_do_command(format string, a ...interface{}) int {
 	cmd := fmt.Sprintf(format, a...)
 	rc := do_command("iptables --wait " + cmd)
 	if rc != 0 {
-		panic(fmt.Sprintf("Failed to run iptables command, return code: %v", rc))
+		panic(fmt.Sprintf("Failed to run iptables command, return code: %v\n", rc))
 	}
 	return rc
 }
@@ -407,6 +408,101 @@ func iptables_init() {
 	 */
 }
 
+func iptables_fw_destroy() {
+	fmt.Printf("Destroying iptables entries\n")
+
+	/*
+	 *
+	 * Everything in the mangle table
+	 *
+	 */
+	fmt.Printf("Destroying chains in the MANGLE table\n")
+	iptables_fw_destroy_mention("mangle", "PREROUTING", CHAIN_TRUSTED)
+	iptables_fw_destroy_mention("mangle", "PREROUTING", CHAIN_BLOCKED)
+	iptables_fw_destroy_mention("mangle", "PREROUTING", CHAIN_ALLOWED)
+	iptables_fw_destroy_mention("mangle", "PREROUTING", CHAIN_OUTGOING)
+	iptables_fw_destroy_mention("mangle", "POSTROUTING", CHAIN_INCOMING)
+	iptables_do_command("-t mangle -F " + CHAIN_TRUSTED)
+	iptables_do_command("-t mangle -F " + CHAIN_BLOCKED)
+	iptables_do_command("-t mangle -F " + CHAIN_ALLOWED)
+	iptables_do_command("-t mangle -F " + CHAIN_OUTGOING)
+	iptables_do_command("-t mangle -F " + CHAIN_INCOMING)
+	iptables_do_command("-t mangle -X " + CHAIN_TRUSTED)
+	iptables_do_command("-t mangle -X " + CHAIN_BLOCKED)
+	iptables_do_command("-t mangle -X " + CHAIN_ALLOWED)
+	iptables_do_command("-t mangle -X " + CHAIN_OUTGOING)
+	iptables_do_command("-t mangle -X " + CHAIN_INCOMING)
+
+	/*
+	 *
+	 * Everything in the nat table
+	 *
+	 */
+
+	fmt.Printf("Destroying chains in the NAT table\n")
+	iptables_fw_destroy_mention("nat", "PREROUTING", CHAIN_OUTGOING)
+	iptables_do_command("-t nat -F " + CHAIN_OUTGOING)
+	iptables_do_command("-t nat -X " + CHAIN_OUTGOING)
+
+	/*
+	 *
+	 * Everything in the filter table
+	 *
+	 */
+
+	fmt.Printf("Destroying chains in the FILTER table\n")
+	iptables_fw_destroy_mention("filter", "INPUT", CHAIN_TO_ROUTER)
+	iptables_fw_destroy_mention("filter", "FORWARD", CHAIN_TO_INTERNET)
+	iptables_do_command("-t filter -F " + CHAIN_TO_ROUTER)
+	iptables_do_command("-t filter -F " + CHAIN_TO_INTERNET)
+	iptables_do_command("-t filter -F " + CHAIN_AUTHENTICATED)
+	iptables_do_command("-t filter -F " + CHAIN_TRUSTED)
+	iptables_do_command("-t filter -F " + CHAIN_TRUSTED_TO_ROUTER)
+	iptables_do_command("-t filter -X " + CHAIN_TO_ROUTER)
+	iptables_do_command("-t filter -X " + CHAIN_TO_INTERNET)
+	iptables_do_command("-t filter -X " + CHAIN_AUTHENTICATED)
+	iptables_do_command("-t filter -X " + CHAIN_TRUSTED)
+	iptables_do_command("-t filter -X " + CHAIN_TRUSTED_TO_ROUTER)
+}
+
+func iptables_fw_destroy_mention(table string, chain string, mention string) bool {
+	cmd := fmt.Sprintf("iptables -t %v -L %v -n --line-numbers -v", table, chain)
+	out, err := exec.Command("sh", "-c", cmd).Output()
+	if err != nil {
+		fmt.Printf("exec.Command error: %v, cmd: %v\n", err, cmd)
+		return false
+	}
+	s := string(out[:])
+	r := bufio.NewReader(strings.NewReader(s))
+	// Skip first two lines
+	r.ReadLine()
+	r.ReadLine()
+
+	found := false
+	line, err := r.ReadString('\n')
+	for err == nil {
+		if strings.Contains(line, mention) {
+			// Found mention - Get the rule number into rulenum.
+			rulenum := 0
+			read, err := fmt.Sscanf(line, "%9[0-9]", &rulenum)
+			if read == 1 && err == nil {
+				fmt.Printf("Deleting rule %v from %v.%v because it mentions %v",
+					rulenum, table, chain, mention)
+				cmd2 := fmt.Sprintf("-t %v -D %v %v", table, chain, rulenum)
+				iptables_do_command(cmd2)
+				found = true
+				break
+			}
+		}
+		line, err = r.ReadString('\n')
+	}
+
+	if found {
+		iptables_fw_destroy_mention(table, chain, mention)
+	}
+	return found
+}
+
 type Client struct {
 	ip  string
 	mac string
@@ -500,6 +596,14 @@ func RunHttpsServer() {
 }
 
 func main() {
+	go func() {
+		sigchan := make(chan os.Signal, 1)
+		signal.Notify(sigchan, os.Interrupt)
+		<-sigchan
+		iptables_fw_destroy()
+		os.Exit(0)
+	}()
+
 	iptables_init()
 	log.Println("Initialized iptables rules")
 
