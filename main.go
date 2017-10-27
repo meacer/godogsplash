@@ -37,6 +37,19 @@ const (
 	CHAIN_TRUSTED           = "ndsTRU"
 )
 
+type Client struct {
+	ip  string
+	mac string
+	idx int
+}
+
+var clients map[string]Client
+
+const (
+	AuthAction_Auth int = iota
+	AuthAction_Deauth
+)
+
 func _iptables_init_marks() {
 	FW_MARK_PREAUTHENTICATED = 0
 	FW_MARK_BLOCKED = 0x100
@@ -510,17 +523,6 @@ func iptables_fw_destroy_mention(table string, chain string, mention string) boo
 	return found
 }
 
-type Client struct {
-	ip  string
-	mac string
-	idx int
-}
-
-const (
-	AuthAction_Auth int = iota
-	AuthAction_Deauth
-)
-
 func iptables_fw_access(client Client) int {
 	log.Printf("Authenticating %v %v %v\n", client.ip, client.mac, client.idx)
 	rc := 0
@@ -560,20 +562,25 @@ type RedirectHandler struct{}
 
 func (h RedirectHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path == "/cert" {
-		DisableCaching(w)
-		w.Header().Set("Content-Type", "application/x-pem-file; charset=utf-8")
-		w.Header().Set("Content-Disposition", "attachment; filename=\"cert.pem\"")
-		http.ServeFile(w, r, "ssl/cert.pem")
-	} else {
-		DisableCaching(w)
-		http.Redirect(w, r, "https://192.168.24.1:2051/", 301)
-		w.Header().Set("Content-Type", "text/html")
-		w.Write([]byte("Redirected<br>\n"))
-		w.Write([]byte(fmt.Sprintf("%v", time.Now())))
+		DownloadCertAction(w, r)
+		return
 	}
+	client_ip := r.RemoteAddr[:strings.LastIndex(r.RemoteAddr, ":")]
+	client_mac := arp_get(client_ip)
+	client_idx := len(clients) + 1
+	clients[client_mac] = Client{client_ip, client_mac, client_idx}
+
+	DisableCaching(w)
+	http.Redirect(w, r, "https://192.168.24.1:2051/", 301)
+	w.Header().Set("Content-Type", "text/html")
+	w.Write([]byte("Redirected<br>\n"))
+	w.Write([]byte(fmt.Sprintf("%v", time.Now())))
 }
 
 func DownloadCertAction(w http.ResponseWriter, r *http.Request) {
+	DisableCaching(w)
+	w.Header().Set("Content-Type", "application/x-pem-file; charset=utf-8")
+	w.Header().Set("Content-Disposition", "attachment; filename=\"cert.pem\"")
 	http.ServeFile(w, r, "ssl/cert.pem")
 }
 
@@ -585,14 +592,22 @@ func AuthAction(w http.ResponseWriter, req *http.Request) {
 	// req.RemoteAddr is in the form of ip:port. Trim the port.
 	client_ip := req.RemoteAddr[:strings.LastIndex(req.RemoteAddr, ":")]
 	client_mac := arp_get(client_ip)
-	client_idx := 1
-	if iptables_fw_access(Client{client_ip, client_mac, client_idx}) == 0 {
+	client, client_found := clients[client_mac]
+	if !client_found {
+		fmt.Printf("First time seeing client, adding to client list.\n")
+		client_idx := len(clients) + 1
+		client = Client{client_ip, client_mac, client_idx}
+		clients[client_mac] = client
+	}
+
+	if iptables_fw_access(client) == 0 {
 		w.Write([]byte(fmt.Sprintf("LOGGED IN<br>")))
 	} else {
 		w.Write([]byte(fmt.Sprintf("NOT LOGGED IN<br>")))
 	}
-	w.Write([]byte(fmt.Sprintf("IP : <b>%v</b><br>", client_ip)))
-	w.Write([]byte(fmt.Sprintf("MAC: <b>%v</b><br>", client_mac)))
+	w.Write([]byte(fmt.Sprintf("IP : <b>%v</b><br>", client.ip)))
+	w.Write([]byte(fmt.Sprintf("MAC: <b>%v</b><br>", client.mac)))
+	w.Write([]byte(fmt.Sprintf("ID : <b>%v</b><br>", client.idx)))
 	w.Write([]byte(fmt.Sprintf("Current time: <b>%v</b>", time.Now())))
 	w.Write([]byte("</body></html>"))
 }
@@ -626,6 +641,8 @@ func RunHttpsServer() {
 
 func main() {
 	iptables_init()
+	clients = make(map[string]Client)
+
 	log.Println("Initialized iptables rules")
 
 	//http.HandleFunc("/auth", AuthAction)
