@@ -46,7 +46,8 @@ type Client struct {
 var clients map[string]Client
 
 const (
-	AuthAction_Auth int = iota
+	AuthAction_None int = iota
+	AuthAction_Auth
 	AuthAction_Deauth
 )
 
@@ -535,6 +536,16 @@ func iptables_fw_access(client Client) int {
 	return rc
 }
 
+func iptables_fw_deauth(client Client) int {
+	log.Printf("De-authenticating %v %v %v\n", client.ip, client.mac, client.idx)
+	rc := 0
+	/* Remove the authentication rules. */
+	rc |= iptables_do_command("-t mangle -D "+CHAIN_OUTGOING+" -s %s -m mac --mac-source %s -j MARK %s 0x%x%x", client.ip, client.mac, markop, client.idx+10, FW_MARK_AUTHENTICATED)
+	rc |= iptables_do_command("-t mangle -D "+CHAIN_INCOMING+" -d %s -j MARK %s 0x%x%x", client.ip, markop, client.idx+10, FW_MARK_AUTHENTICATED)
+	rc |= iptables_do_command("-t mangle -D "+CHAIN_INCOMING+" -d %s -j ACCEPT", client.ip)
+	return rc
+}
+
 func DisableCaching(w http.ResponseWriter) {
 	w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
 	w.Header().Set("Pragma", "no-cache")
@@ -544,7 +555,7 @@ func DisableCaching(w http.ResponseWriter) {
 type HelloHandler struct{}
 
 func (h HelloHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Path == "/auth" {
+	if r.URL.Path == "/auth" || r.URL.Path == "/deauth" {
 		AuthAction(w, r)
 		return
 	}
@@ -552,8 +563,8 @@ func (h HelloHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html")
 	w.Write([]byte("<html><body onunload=''>"))
 	w.Write([]byte("Welcome to TestCaptivePortal<br><br><br>\n"))
-	w.Write([]byte("<a href='/auth'>LOGIN BY CLICKING HERE</a><br><br>\n"))
-	w.Write([]byte("Logout by disconnecting and reconnecting to the hotspot.<br><br>\n"))
+	w.Write([]byte("<a href='/auth'>LOGIN</a><br><br>\n"))
+	w.Write([]byte("<a href='/deauth'>LOGOUT</a><br><br>\n"))
 	w.Write([]byte(fmt.Sprintf("Current time: <b>%v</b>", time.Now())))
 	w.Write([]byte("</body></html>"))
 }
@@ -589,6 +600,13 @@ func AuthAction(w http.ResponseWriter, req *http.Request) {
 	w.Header().Set("Content-Type", "text/html")
 	w.Write([]byte("<html><body onunload=''>"))
 
+	action := AuthAction_None
+	if req.URL.Path == "/auth" {
+		action = AuthAction_Auth
+	} else if req.URL.Path == "/deauth" {
+		action = AuthAction_Deauth
+	}
+
 	// req.RemoteAddr is in the form of ip:port. Trim the port.
 	client_ip := req.RemoteAddr[:strings.LastIndex(req.RemoteAddr, ":")]
 	client_mac := arp_get(client_ip)
@@ -597,19 +615,47 @@ func AuthAction(w http.ResponseWriter, req *http.Request) {
 		fmt.Printf("First time seeing client, adding to client list.\n")
 		client_idx := len(clients) + 1
 		client = Client{client_ip, client_mac, client_idx}
-		clients[client_mac] = client
 	}
 
-	if iptables_fw_access(client) == 0 {
-		w.Write([]byte(fmt.Sprintf("LOGGED IN<br>")))
+	msg := ""
+	rc := -1
+	if action == AuthAction_Auth {
+		clients[client_mac] = client
+		fmt.Printf("Logging in...\n")
+		rc = iptables_fw_access(client)
+		msg = "Login"
+	} else if action == AuthAction_Deauth {
+		delete(clients, client_mac)
+		fmt.Printf("Logging out...\n")
+		rc = iptables_fw_deauth(client)
+		msg = "Logout"
 	} else {
-		w.Write([]byte(fmt.Sprintf("NOT LOGGED IN<br>")))
+		w.Write([]byte("Nothing to do. <a href='/'>Go back</a><br><br>"))
+	}
+	PrintClients()
+
+	if rc == 0 {
+		w.Write([]byte(fmt.Sprintf("%v successful<br>", msg)))
+	} else if rc != -1 {
+		w.Write([]byte(fmt.Sprintf("%v failed<br>", msg)))
 	}
 	w.Write([]byte(fmt.Sprintf("IP : <b>%v</b><br>", client.ip)))
 	w.Write([]byte(fmt.Sprintf("MAC: <b>%v</b><br>", client.mac)))
-	w.Write([]byte(fmt.Sprintf("ID : <b>%v</b><br>", client.idx)))
+	w.Write([]byte(fmt.Sprintf("ID : <b>%v</b><br><br>", client.idx)))
+	w.Write([]byte("<a href='/auth'>LOGIN</a><br><br>\n"))
+	w.Write([]byte("<a href='/deauth'>LOGOUT</a><br><br>\n"))
 	w.Write([]byte(fmt.Sprintf("Current time: <b>%v</b>", time.Now())))
 	w.Write([]byte("</body></html>"))
+}
+
+func PrintClients() {
+	fmt.Printf("=== CLIENT LIST ===\n")
+	for _, client := range clients {
+		fmt.Printf("Client #%v\n", client.idx)
+		fmt.Printf("IP : %s\n", client.ip)
+		fmt.Printf("MAC: %s\n:", client.mac)
+		fmt.Printf("-----------------------\n")
+	}
 }
 
 func FileExists(path string) bool {
