@@ -213,6 +213,13 @@ func iptables_init() {
 
 	FirewallInit()
 
+	/////////////////////////////////////
+	// Enable internet sharing:
+	iptables_do_command("-t nat -I POSTROUTING -o eth0 -j MASQUERADE")
+	iptables_do_command("-I FORWARD -i eth0 -o wlan0 -m state --state RELATED,ESTABLISHED -j ACCEPT")
+	iptables_do_command("-I FORWARD -i wlan0 -o eth0 -j ACCEPT")
+
+	////////////////////////////////////
 	// Set up mangle table chains and rules.
 	// Create new chains in the mangle table.
 	iptables_do_command("-t mangle -N " + CHAIN_TRUSTED)  /* for marking trusted packets */
@@ -526,22 +533,39 @@ func iptables_fw_access(client Client) int {
 	return rc
 }
 
+func DisableCaching(w http.ResponseWriter) {
+	w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
+	w.Header().Set("Pragma", "no-cache")
+	w.Header().Set("Expires", "0")
+}
+
 type HelloHandler struct{}
 
 func (h HelloHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path == "/auth" {
+		AuthAction(w, r)
+		return
+	}
+	DisableCaching(w)
 	w.Header().Set("Content-Type", "text/html")
-	w.Write([]byte("Hello, world<br>\n"))
-	w.Write([]byte(fmt.Sprintf("%v", time.Now())))
+	w.Write([]byte("<html><body onunload=''>"))
+	w.Write([]byte("Welcome to TestCaptivePortal<br><br><br>\n"))
+	w.Write([]byte("<a href='/auth'>LOGIN BY CLICKING HERE</a><br><br>\n"))
+	w.Write([]byte("Logout by disconnecting and reconnecting to the hotspot.<br><br>\n"))
+	w.Write([]byte(fmt.Sprintf("Current time: <b>%v</b>", time.Now())))
+	w.Write([]byte("</body></html>"))
 }
 
 type RedirectHandler struct{}
 
 func (h RedirectHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path == "/cert" {
+		DisableCaching(w)
 		w.Header().Set("Content-Type", "application/x-pem-file; charset=utf-8")
 		w.Header().Set("Content-Disposition", "attachment; filename=\"cert.pem\"")
 		http.ServeFile(w, r, "ssl/cert.pem")
 	} else {
+		DisableCaching(w)
 		http.Redirect(w, r, "https://192.168.24.1:2051/", 301)
 		w.Header().Set("Content-Type", "text/html")
 		w.Write([]byte("Redirected<br>\n"))
@@ -554,18 +578,23 @@ func DownloadCertAction(w http.ResponseWriter, r *http.Request) {
 }
 
 func AuthAction(w http.ResponseWriter, req *http.Request) {
+	DisableCaching(w)
 	w.Header().Set("Content-Type", "text/html")
-	w.Write([]byte(fmt.Sprintf("%v\n", time.Now())))
+	w.Write([]byte("<html><body onunload=''>"))
 
 	// req.RemoteAddr is in the form of ip:port. Trim the port.
 	client_ip := req.RemoteAddr[:strings.LastIndex(req.RemoteAddr, ":")]
 	client_mac := arp_get(client_ip)
 	client_idx := 1
 	if iptables_fw_access(Client{client_ip, client_mac, client_idx}) == 0 {
-		w.Write([]byte(fmt.Sprintf("Authenticated %v\n", client_ip)))
-		return
+		w.Write([]byte(fmt.Sprintf("LOGGED IN<br>")))
+	} else {
+		w.Write([]byte(fmt.Sprintf("NOT LOGGED IN<br>")))
 	}
-	w.Write([]byte(fmt.Sprintf("NOT Authenticated %v\n", client_ip)))
+	w.Write([]byte(fmt.Sprintf("IP : <b>%v</b><br>", client_ip)))
+	w.Write([]byte(fmt.Sprintf("MAC: <b>%v</b><br>", client_mac)))
+	w.Write([]byte(fmt.Sprintf("Current time: <b>%v</b>", time.Now())))
+	w.Write([]byte("</body></html>"))
 }
 
 func FileExists(path string) bool {
@@ -596,14 +625,6 @@ func RunHttpsServer() {
 }
 
 func main() {
-	go func() {
-		sigchan := make(chan os.Signal, 1)
-		signal.Notify(sigchan, os.Interrupt)
-		<-sigchan
-		iptables_fw_destroy()
-		os.Exit(0)
-	}()
-
 	iptables_init()
 	log.Println("Initialized iptables rules")
 
@@ -627,13 +648,22 @@ func main() {
 
 	log.Println("Starting HTTP server at port 2050")
 	server := http.Server{
-		Addr:    ":2050",
-		Handler: RedirectHandler{},
+		Addr: ":2050",
+		//Handler: RedirectHandler{},
+		Handler: HelloHandler{},
 	}
 	err := server.ListenAndServe()
 	if err != nil {
 		fmt.Printf("Could not start HTTP server: %v\n", err)
 		return
 	}
+	go func() {
+		sigchan := make(chan os.Signal, 1)
+		signal.Notify(sigchan, os.Interrupt)
+		<-sigchan
+		iptables_fw_destroy()
+		os.Exit(0)
+	}()
+
 	log.Println("Started")
 }
