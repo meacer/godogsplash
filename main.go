@@ -52,6 +52,15 @@ const (
 	AuthAction_Deauth
 )
 
+// Configuration
+var (
+	gw_interface = "wlan0"
+	gw_iprange   = "0.0.0.0/0"
+	gw_address   = "192.168.24.1"
+	gw_port      = 2050
+	gw_port_ssl  = 2051
+)
+
 func _iptables_init_marks() {
 	FW_MARK_PREAUTHENTICATED = 0
 	FW_MARK_BLOCKED = 0x100
@@ -218,13 +227,6 @@ func FirewallInit() {
 
 func iptables_init() {
 	//iptables.getIPTablesHasCheckCommand("test")
-
-	gw_interface := "wlan0"
-	gw_iprange := "0.0.0.0/0"
-	gw_address := "192.168.24.1"
-	gw_port := 2050
-	gw_port_ssl := 2051
-
 	set_mss := true
 	mss_value := 0
 	rc := 0
@@ -596,7 +598,8 @@ func (h RedirectHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	clients[client_mac] = Client{client_ip, client_mac, client_idx}
 
 	DisableCaching(w)
-	http.Redirect(w, r, "https://192.168.24.1:2051/", 301)
+	http.Redirect(w, r, fmt.Sprintf("https://%v:%v/", gw_address, gw_port_ssl), 301)
+
 	w.Header().Set("Content-Type", "text/html")
 	w.Write([]byte("Redirected<br>\n"))
 	w.Write([]byte(fmt.Sprintf("%v", time.Now())))
@@ -689,7 +692,7 @@ func RunHttpsServer() {
 	cfg.BuildNameToCertificate()
 
 	https_server := http.Server{
-		Addr:      ":2051",
+		Addr:      fmt.Sprintf(":%d", gw_port_ssl),
 		Handler:   HelloHandler{},
 		TLSConfig: cfg,
 	}
@@ -727,15 +730,15 @@ func main() {
 	}
 
 	if run_https {
-		log.Println("Starting HTTPS server at port 2051")
+		log.Printf("Starting HTTPS server at port %v\n", gw_port_ssl)
 		go RunHttpsServer()
 	}
 
-	log.Println("Starting HTTP server at port 2050")
+	log.Printf("Starting HTTP server at port %v\n", gw_port)
 	server := http.Server{
-		Addr: ":2050",
-		//Handler: RedirectHandler{},
-		Handler: HelloHandler{},
+		Addr:    fmt.Sprintf(":%d", gw_port),
+		Handler: RedirectHandler{},
+		//Handler: HelloHandler{},
 	}
 	err := server.ListenAndServe()
 	if err != nil {
