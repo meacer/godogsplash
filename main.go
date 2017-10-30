@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -54,11 +55,12 @@ const (
 
 // Configuration
 var (
-	gw_interface = "wlan0"
-	gw_iprange   = "0.0.0.0/0"
-	gw_address   = "192.168.24.1"
-	gw_port      = 2050
-	gw_port_ssl  = 2051
+	gw_interface           = "wlan0"
+	gw_iprange             = "0.0.0.0/0"
+	gw_address             = "192.168.24.1"
+	gw_port                = 2050
+	gw_port_ssl            = 2051
+	redirect_http_to_https = false
 )
 
 func _iptables_init_marks() {
@@ -568,64 +570,49 @@ func DisableCaching(w http.ResponseWriter) {
 	w.Header().Set("Expires", "0")
 }
 
-type HelloHandler struct{}
+type HomePageHandler struct{}
 
-func (h HelloHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Path == "/auth" || r.URL.Path == "/deauth" {
-		AuthAction(w, r)
+func (h HomePageHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	DisableCaching(w)
+	if redirect_http_to_https {
+		http.Redirect(w, r, fmt.Sprintf("https://%v:%v/", gw_address, gw_port_ssl), 301)
 		return
 	}
-	DisableCaching(w)
-	w.Header().Set("Content-Type", "text/html")
-	w.Write([]byte("<html><body onunload=''>"))
-	w.Write([]byte("Welcome to TestCaptivePortal<br><br><br>\n"))
-	w.Write([]byte("<a href='/auth'>LOGIN</a><br><br>\n"))
-	w.Write([]byte("<a href='/deauth'>LOGOUT</a><br><br>\n"))
-	w.Write([]byte(fmt.Sprintf("Current time: <b>%v</b>", time.Now())))
-	w.Write([]byte("</body></html>"))
-}
-
-type RedirectHandler struct{}
-
-func (h RedirectHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Path == "/cert" {
-		DownloadCertAction(w, r)
+	if r.URL.Path == "/cert.pem" {
+		DisableCaching(w)
+		w.Header().Set("Content-Type", "application/x-pem-file; charset=utf-8")
+		w.Header().Set("Content-Disposition", "attachment; filename=\"cert.pem\"")
+		http.ServeFile(w, r, "ssl/cert.pem")
 		return
 	}
-	client_ip := r.RemoteAddr[:strings.LastIndex(r.RemoteAddr, ":")]
-	client_mac := arp_get(client_ip)
-	client_idx := len(clients) + 1
-	clients[client_mac] = Client{client_ip, client_mac, client_idx}
-
-	DisableCaching(w)
-	http.Redirect(w, r, fmt.Sprintf("https://%v:%v/", gw_address, gw_port_ssl), 301)
+	// If not already on the gateway URL, redirect there:
+	if r.Host != fmt.Sprintf("%v:%v", gw_address, gw_port) {
+		// TODO: Don't assume the original URL is http. This should use r.URL.Scheme
+		// instead.
+		current_url := fmt.Sprintf("http://%v%v", r.Host, r.URL.Path)
+		http.Redirect(w, r, fmt.Sprintf("http://%v:%v/?redirect=%v", gw_address, gw_port, current_url), 301)
+		return
+	}
 
 	w.Header().Set("Content-Type", "text/html")
-	w.Write([]byte("Redirected<br>\n"))
-	w.Write([]byte(fmt.Sprintf("%v", time.Now())))
-}
+	w.Write([]byte("<html><title>Captive Portal</title><body onunload=''><h3>TestCaptivePortal</h3>"))
 
-func DownloadCertAction(w http.ResponseWriter, r *http.Request) {
-	DisableCaching(w)
-	w.Header().Set("Content-Type", "application/x-pem-file; charset=utf-8")
-	w.Header().Set("Content-Disposition", "attachment; filename=\"cert.pem\"")
-	http.ServeFile(w, r, "ssl/cert.pem")
-}
-
-func AuthAction(w http.ResponseWriter, req *http.Request) {
-	DisableCaching(w)
-	w.Header().Set("Content-Type", "text/html")
-	w.Write([]byte("<html><body onunload=''>"))
-
+	params, _ := url.ParseQuery(r.URL.RawQuery)
 	action := AuthAction_None
-	if req.URL.Path == "/auth" {
-		action = AuthAction_Auth
-	} else if req.URL.Path == "/deauth" {
-		action = AuthAction_Deauth
+	if len(params["action"]) > 0 {
+		if params["action"][0] == "login" {
+			action = AuthAction_Auth
+		} else if params["action"][0] == "logout" {
+			action = AuthAction_Auth
+		}
+	}
+	redirect_url := ""
+	if len(params["redirect"]) > 0 {
+		redirect_url = params["redirect"][0]
 	}
 
-	// req.RemoteAddr is in the form of ip:port. Trim the port.
-	client_ip := req.RemoteAddr[:strings.LastIndex(req.RemoteAddr, ":")]
+	// r.RemoteAddr is in the form of ip:port. Trim the port.
+	client_ip := r.RemoteAddr[:strings.LastIndex(r.RemoteAddr, ":")]
 	client_mac := arp_get(client_ip)
 	client, client_found := clients[client_mac]
 	if !client_found {
@@ -646,21 +633,21 @@ func AuthAction(w http.ResponseWriter, req *http.Request) {
 		log.Printf("Logging out...\n")
 		rc = iptables_fw_deauth(client)
 		msg = "Logout"
-	} else {
-		w.Write([]byte("Nothing to do. <a href='/'>Go back</a><br><br>"))
 	}
 	PrintClients()
 
 	if rc == 0 {
-		w.Write([]byte(fmt.Sprintf("%v successful<br>", msg)))
+		w.Write([]byte(fmt.Sprintf("<h4>%v successful</h4><br><br>", msg)))
+		w.Write([]byte(fmt.Sprintf("Continue to <a href='%v'>%v</a><br><br>", redirect_url, redirect_url)))
 	} else if rc != -1 {
 		w.Write([]byte(fmt.Sprintf("%v failed<br>", msg)))
 	}
-	w.Write([]byte(fmt.Sprintf("IP : <b>%v</b><br>", client.ip)))
-	w.Write([]byte(fmt.Sprintf("MAC: <b>%v</b><br>", client.mac)))
-	w.Write([]byte(fmt.Sprintf("ID : <b>%v</b><br><br>", client.idx)))
-	w.Write([]byte("<a href='/auth'>LOGIN</a><br><br>\n"))
-	w.Write([]byte("<a href='/deauth'>LOGOUT</a><br><br>\n"))
+	w.Write([]byte(fmt.Sprintf("<a href='?action=login&redirect=%v'>LOGIN</a><br><br>\n", redirect_url)))
+	w.Write([]byte(fmt.Sprintf("<a href='?action=logout&redirect=%v'>LOGOUT</a><br><br>\n", redirect_url)))
+	w.Write([]byte("<a href='/cert.pem'>Download SSL certificate</a><br><br>\n"))
+	w.Write([]byte(fmt.Sprintf("Client IP : <b>%v</b><br>", client.ip)))
+	w.Write([]byte(fmt.Sprintf("Client MAC: <b>%v</b><br>", client.mac)))
+	w.Write([]byte(fmt.Sprintf("Client ID : <b>%v</b><br>", client.idx)))
 	w.Write([]byte(fmt.Sprintf("Current time: <b>%v</b>", time.Now())))
 	w.Write([]byte("</body></html>"))
 }
@@ -693,7 +680,7 @@ func RunHttpsServer() {
 
 	https_server := http.Server{
 		Addr:      fmt.Sprintf(":%d", gw_port_ssl),
-		Handler:   HelloHandler{},
+		Handler:   HomePageHandler{},
 		TLSConfig: cfg,
 	}
 	err = https_server.ListenAndServeTLS("", "")
@@ -716,9 +703,6 @@ func main() {
 	clients = make(map[string]Client)
 	log.Println("Initialized iptables rules")
 
-	//http.HandleFunc("/auth", AuthAction)
-	http.HandleFunc("/cert", DownloadCertAction)
-
 	run_https := true
 	if !FileExists("ssl/cert.pem") {
 		log.Println("ssl/cert.pem doesn't exist, not running HTTPS server")
@@ -737,8 +721,7 @@ func main() {
 	log.Printf("Starting HTTP server at port %v\n", gw_port)
 	server := http.Server{
 		Addr:    fmt.Sprintf(":%d", gw_port),
-		Handler: RedirectHandler{},
-		//Handler: HelloHandler{},
+		Handler: HomePageHandler{},
 	}
 	err := server.ListenAndServe()
 	if err != nil {
