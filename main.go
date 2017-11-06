@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -46,6 +47,7 @@ type Client struct {
 }
 
 var clients map[string]Client
+var clients_mutex *sync.Mutex
 
 const (
 	AuthAction_None int = iota
@@ -545,26 +547,27 @@ func iptables_fw_destroy_mention_with_reader(table string, chain string, mention
 	return found
 }
 
-func iptables_fw_access(client Client) int {
-	log.Printf("Authenticating %v %v %v\n", client.ip, client.mac, client.idx)
+func iptables_fw_access(client Client, auth_action int) int {
 	rc := 0
-	/* This rule is for marking upload (outgoing) packets, and for upload byte counting */
-	rc |= iptables_do_command("-t mangle -A "+CHAIN_OUTGOING+" -s %s -m mac --mac-source %s -j MARK %s 0x%x%x", client.ip, client.mac, markop, client.idx+10, FW_MARK_AUTHENTICATED)
-	rc |= iptables_do_command("-t mangle -A "+CHAIN_INCOMING+" -d %s -j MARK %s 0x%x%x", client.ip, markop, client.idx+10, FW_MARK_AUTHENTICATED)
+	if auth_action == AuthAction_Auth {
+		log.Printf("Authenticating %v %v %v\n", client.ip, client.mac, client.idx)
+		/* This rule is for marking upload (outgoing) packets, and for upload byte counting */
+		rc |= iptables_do_command("-t mangle -A "+CHAIN_OUTGOING+" -s %s -m mac --mac-source %s -j MARK %s 0x%x%x", client.ip, client.mac, markop, client.idx+10, FW_MARK_AUTHENTICATED)
+		rc |= iptables_do_command("-t mangle -A "+CHAIN_INCOMING+" -d %s -j MARK %s 0x%x%x", client.ip, markop, client.idx+10, FW_MARK_AUTHENTICATED)
 
-	/* This rule is just for download (incoming) byte counting, see iptables_fw_counters_update() */
-	rc |= iptables_do_command("-t mangle -A "+CHAIN_INCOMING+" -d %s -j ACCEPT", client.ip)
-	return rc
-}
-
-func iptables_fw_deauth(client Client) int {
-	log.Printf("De-authenticating %v %v %v\n", client.ip, client.mac, client.idx)
-	rc := 0
-	/* Remove the authentication rules. */
-	rc |= iptables_do_command("-t mangle -D "+CHAIN_OUTGOING+" -s %s -m mac --mac-source %s -j MARK %s 0x%x%x", client.ip, client.mac, markop, client.idx+10, FW_MARK_AUTHENTICATED)
-	rc |= iptables_do_command("-t mangle -D "+CHAIN_INCOMING+" -d %s -j MARK %s 0x%x%x", client.ip, markop, client.idx+10, FW_MARK_AUTHENTICATED)
-	rc |= iptables_do_command("-t mangle -D "+CHAIN_INCOMING+" -d %s -j ACCEPT", client.ip)
-	return rc
+		/* This rule is just for download (incoming) byte counting, see iptables_fw_counters_update() */
+		rc |= iptables_do_command("-t mangle -A "+CHAIN_INCOMING+" -d %s -j ACCEPT", client.ip)
+		return rc
+	} else if auth_action == AuthAction_Deauth {
+		log.Printf("De-authenticating %v %v %v\n", client.ip, client.mac, client.idx)
+		/* Remove the authentication rules. */
+		rc |= iptables_do_command("-t mangle -D "+CHAIN_OUTGOING+" -s %s -m mac --mac-source %s -j MARK %s 0x%x%x", client.ip, client.mac, markop, client.idx+10, FW_MARK_AUTHENTICATED)
+		rc |= iptables_do_command("-t mangle -D "+CHAIN_INCOMING+" -d %s -j MARK %s 0x%x%x", client.ip, markop, client.idx+10, FW_MARK_AUTHENTICATED)
+		rc |= iptables_do_command("-t mangle -D "+CHAIN_INCOMING+" -d %s -j ACCEPT", client.ip)
+		return rc
+	}
+	panic(fmt.Sprintf("Incorrect auth action: %d", auth_action))
+	return -1
 }
 
 func DisableCaching(w http.ResponseWriter) {
@@ -617,6 +620,8 @@ func (h HomePageHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// r.RemoteAddr is in the form of ip:port. Trim the port.
 	client_ip := r.RemoteAddr[:strings.LastIndex(r.RemoteAddr, ":")]
 	client_mac := arp_get(client_ip)
+
+	clients_mutex.Lock()
 	client, client_found := clients[client_mac]
 	if !client_found {
 		log.Printf("First time seeing client, adding to client list.\n")
@@ -626,18 +631,21 @@ func (h HomePageHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	msg := ""
 	rc := -1
-	if action == AuthAction_Auth {
-		clients[client_mac] = client
-		log.Printf("Logging in...\n")
-		rc = iptables_fw_access(client)
-		msg = "Login"
-	} else if action == AuthAction_Deauth {
-		delete(clients, client_mac)
-		log.Printf("Logging out...\n")
-		rc = iptables_fw_deauth(client)
-		msg = "Logout"
+	if action == AuthAction_Auth || action == AuthAction_Deauth {
+		if action == AuthAction_Auth {
+			clients[client_mac] = client
+			log.Printf("Logging in...\n")
+			msg = "Login"
+		} else {
+			delete(clients, client_mac)
+			log.Printf("Logging out...\n")
+			msg = "Logout"
+		}
+
+		rc = iptables_fw_access(client, action)
 	}
 	PrintClients()
+	clients_mutex.Unlock()
 
 	if rc == 0 {
 		w.Write([]byte(fmt.Sprintf("<h4>%v successful</h4><br><br>", msg)))
@@ -704,6 +712,7 @@ func main() {
 	}()
 
 	clients = make(map[string]Client)
+	clients_mutex = &sync.Mutex{}
 	log.Println("Initialized iptables rules")
 
 	run_https := true
