@@ -55,12 +55,15 @@ const (
 
 // Configuration
 var (
-	gw_interface           = "wlan0"
-	gw_iprange             = "0.0.0.0/0"
-	gw_address             = "192.168.24.1"
-	gw_port                = 2050
-	gw_port_ssl            = 2051
+	gw_interface = "wlan0"
+	gw_iprange   = "0.0.0.0/0"
+	gw_address   = "192.168.24.1"
+	gw_port      = 2050
+	gw_port_ssl  = 2051
+	// Redirects HTTP URLs to HTTPS
 	redirect_http_to_https = false
+	// Redirects HTTP URLs to the gateway URL instead of modifying the HTTP page.
+	redirect_to_gateway = false
 )
 
 func _iptables_init_marks() {
@@ -586,7 +589,7 @@ func (h HomePageHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// If not already on the gateway URL, redirect there:
-	if r.Host != fmt.Sprintf("%v:%v", gw_address, gw_port) {
+	if redirect_to_gateway && r.Host != fmt.Sprintf("%v:%v", gw_address, gw_port) {
 		// TODO: Don't assume the original URL is http. This should use r.URL.Scheme
 		// instead.
 		current_url := fmt.Sprintf("http://%v%v", r.Host, r.URL.Path)
