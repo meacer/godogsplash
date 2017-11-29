@@ -41,9 +41,10 @@ const (
 )
 
 type Client struct {
-	ip  string
-	mac string
-	idx int
+	ip            string
+	mac           string
+	idx           int
+	authenticated bool
 }
 
 var clients map[string]Client
@@ -60,8 +61,8 @@ var (
 	gw_interface = "wlan0"
 	gw_iprange   = "0.0.0.0/0"
 	gw_address   = "192.168.24.1"
-	gw_port      = 2050
-	gw_port_ssl  = 2051
+	gw_port      = 80
+	gw_port_ssl  = 443
 	// Redirects HTTP URLs to HTTPS
 	redirect_http_to_https = false
 	// Redirects HTTP URLs to the gateway URL instead of modifying the HTTP page.
@@ -609,7 +610,7 @@ func (h HomePageHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if params["action"][0] == "login" {
 			action = AuthAction_Auth
 		} else if params["action"][0] == "logout" {
-			action = AuthAction_Auth
+			action = AuthAction_Deauth
 		}
 	}
 	redirect_url := ""
@@ -624,26 +625,31 @@ func (h HomePageHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	clients_mutex.Lock()
 	client, client_found := clients[client_mac]
 	if !client_found {
-		log.Printf("First time seeing client, adding to client list.\n")
+		log.Printf("First time seeing client %v, adding to client list.\n", client_mac)
 		client_idx := len(clients) + 1
-		client = Client{client_ip, client_mac, client_idx}
+		client = Client{client_ip, client_mac, client_idx, false}
+		clients[client_mac] = client
 	}
 
 	msg := ""
 	rc := -1
 	if action == AuthAction_Auth || action == AuthAction_Deauth {
 		if action == AuthAction_Auth {
+			client.authenticated = true
 			clients[client_mac] = client
 			log.Printf("Logging in...\n")
 			msg = "Login"
 		} else {
-			delete(clients, client_mac)
+			client.authenticated = false
+			clients[client_mac] = client
 			log.Printf("Logging out...\n")
 			msg = "Logout"
 		}
-
 		rc = iptables_fw_access(client, action)
+	} else {
+		log.Printf("No auth action\n")
 	}
+
 	PrintClients()
 	clients_mutex.Unlock()
 
@@ -668,7 +674,8 @@ func PrintClients() {
 	for _, client := range clients {
 		fmt.Printf("Client #%v\n", client.idx)
 		fmt.Printf("IP : %s\n", client.ip)
-		fmt.Printf("MAC: %s\n:", client.mac)
+		fmt.Printf("MAC: %s\n", client.mac)
+		fmt.Printf("Authenticated: %v\n", client.authenticated)
 		fmt.Printf("-----------------------\n")
 	}
 }
