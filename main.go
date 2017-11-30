@@ -67,7 +67,7 @@ const (
 	redirect_http_to_https = false
 	// Redirects HTTP URLs to the gateway URL instead of modifying the HTTP page.
 	redirect_to_gateway       = false
-	client_timeout_in_minutes = 1
+	client_timeout_in_minutes = 15
 )
 
 func _iptables_init_marks() {
@@ -203,7 +203,7 @@ func _iptables_append_ruleset(table string, ruleset string, chain string) int {
 		}
 	} else if ruleset == "authenticated-users" {
 		rules = []FirewallRule{
-			FirewallRule{TARGET_REJECT, "" /* protocol */, "" /* port */, "192.168.0.0/16", ""},
+			FirewallRule{TARGET_REJECT, "" /* protocol */, "" /* port */, "192.168.0.0/16" /* mask */, "" /* ipset */},
 			FirewallRule{TARGET_REJECT, "" /* protocol */, "" /* port */, "10.0.0.0/8", ""},
 			FirewallRule{TARGET_ACCEPT, "tcp" /* protocol */, "53" /* port */, "0.0.0.0/0", ""},
 			FirewallRule{TARGET_ACCEPT, "udp" /* protocol */, "53" /* port */, "0.0.0.0/0", ""},
