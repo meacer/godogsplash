@@ -41,10 +41,10 @@ const (
 )
 
 type Client struct {
-	ip            string
-	mac           string
-	idx           int
-	authenticated bool
+	ip        string
+	mac       string
+	idx       int
+	auth_time time.Time
 }
 
 var clients map[string]Client
@@ -57,7 +57,7 @@ const (
 )
 
 // Configuration
-var (
+const (
 	gw_interface = "wlan0"
 	gw_iprange   = "0.0.0.0/0"
 	gw_address   = "192.168.24.1"
@@ -66,7 +66,8 @@ var (
 	// Redirects HTTP URLs to HTTPS
 	redirect_http_to_https = false
 	// Redirects HTTP URLs to the gateway URL instead of modifying the HTTP page.
-	redirect_to_gateway = false
+	redirect_to_gateway       = false
+	client_timeout_in_minutes = 1
 )
 
 func _iptables_init_marks() {
@@ -558,15 +559,32 @@ func iptables_fw_access(client Client, auth_action int) int {
 
 		/* This rule is just for download (incoming) byte counting, see iptables_fw_counters_update() */
 		rc |= iptables_do_command("-t mangle -A "+CHAIN_INCOMING+" -d %s -j ACCEPT", client.ip)
+
+		if rc == 0 {
+			clients_mutex.Lock()
+			client.auth_time = time.Now()
+			clients[client.mac] = client
+			clients_mutex.Unlock()
+		}
 		return rc
-	} else if auth_action == AuthAction_Deauth {
+	}
+
+	if auth_action == AuthAction_Deauth {
 		log.Printf("De-authenticating %v %v %v\n", client.ip, client.mac, client.idx)
 		/* Remove the authentication rules. */
 		rc |= iptables_do_command("-t mangle -D "+CHAIN_OUTGOING+" -s %s -m mac --mac-source %s -j MARK %s 0x%x%x", client.ip, client.mac, markop, client.idx+10, FW_MARK_AUTHENTICATED)
 		rc |= iptables_do_command("-t mangle -D "+CHAIN_INCOMING+" -d %s -j MARK %s 0x%x%x", client.ip, markop, client.idx+10, FW_MARK_AUTHENTICATED)
 		rc |= iptables_do_command("-t mangle -D "+CHAIN_INCOMING+" -d %s -j ACCEPT", client.ip)
+
+		if rc == 0 {
+			clients_mutex.Lock()
+			client.auth_time = time.Time{}
+			clients[client.mac] = client
+			clients_mutex.Unlock()
+		}
 		return rc
 	}
+
 	panic(fmt.Sprintf("Incorrect auth action: %d", auth_action))
 	return -1
 }
@@ -627,45 +645,56 @@ func (h HomePageHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if !client_found {
 		log.Printf("First time seeing client %v, adding to client list.\n", client_mac)
 		client_idx := len(clients) + 1
-		client = Client{client_ip, client_mac, client_idx, false}
+		client = Client{client_ip, client_mac, client_idx, time.Time{}}
 		clients[client_mac] = client
 	}
+	clients_mutex.Unlock()
 
-	msg := ""
-	rc := -1
 	if action == AuthAction_Auth || action == AuthAction_Deauth {
+		msg := ""
 		if action == AuthAction_Auth {
-			client.authenticated = true
-			clients[client_mac] = client
 			log.Printf("Logging in...\n")
 			msg = "Login"
 		} else {
-			client.authenticated = false
-			clients[client_mac] = client
 			log.Printf("Logging out...\n")
 			msg = "Logout"
 		}
-		rc = iptables_fw_access(client, action)
+		rc := iptables_fw_access(client, action)
+		if rc == 0 {
+			// Update client information. Auth time might have changed.
+			client = clients[client_mac]
+			w.Write([]byte(fmt.Sprintf("<h4>%v successful</h4><br><br>", msg)))
+			w.Write([]byte(fmt.Sprintf("Continue to <a href='%v'>%v</a><br><br>", redirect_url, redirect_url)))
+		} else {
+			w.Write([]byte(fmt.Sprintf("%v failed, return code: %v<br>", msg, rc)))
+		}
 	} else {
 		log.Printf("No auth action\n")
 	}
 
+	clients_mutex.Lock()
 	PrintClients()
 	clients_mutex.Unlock()
 
-	if rc == 0 {
-		w.Write([]byte(fmt.Sprintf("<h4>%v successful</h4><br><br>", msg)))
-		w.Write([]byte(fmt.Sprintf("Continue to <a href='%v'>%v</a><br><br>", redirect_url, redirect_url)))
-	} else if rc != -1 {
-		w.Write([]byte(fmt.Sprintf("%v failed<br>", msg)))
-	}
 	w.Write([]byte(fmt.Sprintf("<a href='?action=login&redirect=%v'>LOGIN</a><br><br>\n", redirect_url)))
 	w.Write([]byte(fmt.Sprintf("<a href='?action=logout&redirect=%v'>LOGOUT</a><br><br>\n", redirect_url)))
-	w.Write([]byte("<a href='/cert.pem'>Download SSL certificate</a><br><br>\n"))
+	w.Write([]byte("In order to view this page without an SSL error, <a href='/cert.pem'>download SSL certificate</a> and install it.<br><br>\n"))
+	w.Write([]byte("<pre>"))
+
+	if !client.auth_time.IsZero() {
+		w.Write([]byte(fmt.Sprintf("Login time: <b>%v</b><br>", client.auth_time)))
+		w.Write([]byte(fmt.Sprintf("Remaining : <b>%v minutes</b><br>",
+			1+int(client_timeout_in_minutes-time.Now().Sub(client.auth_time).Minutes()))))
+	} else {
+		w.Write([]byte("<b>Not logged in</b><br>"))
+	}
+
 	w.Write([]byte(fmt.Sprintf("Client IP : <b>%v</b><br>", client.ip)))
 	w.Write([]byte(fmt.Sprintf("Client MAC: <b>%v</b><br>", client.mac)))
 	w.Write([]byte(fmt.Sprintf("Client ID : <b>%v</b><br>", client.idx)))
+
 	w.Write([]byte(fmt.Sprintf("Current time: <b>%v</b>", time.Now())))
+	w.Write([]byte("</pre>"))
 	w.Write([]byte("</body></html>"))
 }
 
@@ -675,7 +704,11 @@ func PrintClients() {
 		fmt.Printf("Client #%v\n", client.idx)
 		fmt.Printf("IP : %s\n", client.ip)
 		fmt.Printf("MAC: %s\n", client.mac)
-		fmt.Printf("Authenticated: %v\n", client.authenticated)
+		if !client.auth_time.IsZero() {
+			fmt.Printf("Auth Time: %v\n", client.auth_time)
+		} else {
+			fmt.Printf("Not authenticated\n")
+		}
 		fmt.Printf("-----------------------\n")
 	}
 }
@@ -707,6 +740,23 @@ func RunHttpsServer() {
 	}
 }
 
+func ClientTimeoutCheck() {
+	for range time.Tick(time.Minute * 1) {
+		now := time.Now()
+		fmt.Printf("ClientTimeoutCheck at %v\n", now)
+		clients_mutex.Lock()
+		client_list := clients
+		clients_mutex.Unlock()
+
+		for _, client := range client_list {
+			if !client.auth_time.IsZero() && now.Sub(client.auth_time).Minutes() > client_timeout_in_minutes {
+				log.Printf("Client %v timeout, deauthenticating.\n", client.mac)
+				iptables_fw_access(client, AuthAction_Deauth)
+			}
+		}
+	}
+}
+
 func main() {
 	iptables_fw_destroy()
 	iptables_init()
@@ -731,6 +781,8 @@ func main() {
 		log.Println("ssl/key.pem doesn't exist, not running HTTPS server")
 		run_https = false
 	}
+
+	go ClientTimeoutCheck()
 
 	if run_https {
 		log.Printf("Starting HTTPS server at port %v\n", gw_port_ssl)
