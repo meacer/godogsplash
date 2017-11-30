@@ -631,10 +631,6 @@ func (h HomePageHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			action = AuthAction_Deauth
 		}
 	}
-	redirect_url := ""
-	if len(params["redirect"]) > 0 {
-		redirect_url = params["redirect"][0]
-	}
 
 	// r.RemoteAddr is in the form of ip:port. Trim the port.
 	client_ip := r.RemoteAddr[:strings.LastIndex(r.RemoteAddr, ":")]
@@ -664,7 +660,6 @@ func (h HomePageHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			// Update client information. Auth time might have changed.
 			client = clients[client_mac]
 			w.Write([]byte(fmt.Sprintf("<h4>%v successful</h4><br><br>", msg)))
-			w.Write([]byte(fmt.Sprintf("Continue to <a href='%v'>%v</a><br><br>", redirect_url, redirect_url)))
 		} else {
 			w.Write([]byte(fmt.Sprintf("%v failed, return code: %v<br>", msg, rc)))
 		}
@@ -676,8 +671,8 @@ func (h HomePageHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	PrintClients()
 	clients_mutex.Unlock()
 
-	w.Write([]byte(fmt.Sprintf("<a href='?action=login&redirect=%v'>LOGIN</a><br><br>\n", redirect_url)))
-	w.Write([]byte(fmt.Sprintf("<a href='?action=logout&redirect=%v'>LOGOUT</a><br><br>\n", redirect_url)))
+	w.Write([]byte("<a href='?action=login'>LOGIN</a><br><br>\n"))
+	w.Write([]byte("<a href='?action=logout'>LOGOUT</a><br><br>\n"))
 	w.Write([]byte("In order to view this page without an SSL error, <a href='/cert.pem'>download SSL certificate</a> and install it.<br><br>\n"))
 	w.Write([]byte("<pre>"))
 
