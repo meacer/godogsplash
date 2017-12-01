@@ -65,11 +65,8 @@ const (
 	gw_address   = "192.168.24.1"
 	gw_port      = 80
 	gw_port_ssl  = 443
-	// Redirects HTTP URLs to HTTPS
-	redirect_http_to_https = true
-	// Redirects HTTP URLs to the gateway URL instead of modifying the HTTP page.
-	redirect_to_gateway = true
-	gw_hostname         = ""
+
+	gw_hostname = ""
 )
 
 func _iptables_init_marks() {
@@ -597,7 +594,10 @@ func DisableCaching(w http.ResponseWriter) {
 	w.Header().Set("Expires", "0")
 }
 
-type HomePageHandler struct{}
+type HomePageHandler struct {
+	redirect_http_to_https bool
+	redirect_to_gateway    bool
+}
 
 func GetHostname(hostname string, port int) string {
 	if port == 80 || port == 443 {
@@ -615,13 +615,13 @@ func (h HomePageHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if len(gw_hostname) > 0 {
 		redirect_hostname = GetHostname(gw_hostname, gw_port)
 	}
-	if redirect_http_to_https && r.TLS == nil {
+	if h.redirect_http_to_https && r.TLS == nil {
 		redirect_url := fmt.Sprintf("https://%v/", redirect_hostname)
 		log.Printf("Redirecting to HTTPS, current scheme: %v (%v)\n", r.URL.Scheme, redirect_url)
 		http.Redirect(w, r, redirect_url, 301)
 		return
 	}
-	if redirect_to_gateway && r.Host != redirect_hostname {
+	if h.redirect_to_gateway && r.Host != redirect_hostname {
 		// If not already redirected, do the redirect:
 		// TODO: Don't assume the original URL is http. These should use r.URL.Scheme
 		// instead.
@@ -812,8 +812,9 @@ func main() {
 
 	log.Printf("Starting HTTP server at port %v\n", gw_port)
 	server := http.Server{
-		Addr:    fmt.Sprintf(":%d", gw_port),
-		Handler: HomePageHandler{},
+		Addr: fmt.Sprintf(":%d", gw_port),
+		Handler: HomePageHandler{redirect_http_to_https: config.RedirectHttpToHttps,
+			redirect_to_gateway: config.RedirectToGateway},
 	}
 	err = server.ListenAndServe()
 	if err != nil {

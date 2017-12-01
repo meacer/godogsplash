@@ -1,5 +1,7 @@
 {
   "SSLCert": "ssl/cert.pem",
   "SSLKey": "ssl/key.pem",
-  "ClientTimeoutInMinutes": 15
+  "ClientTimeoutInMinutes": 15,
+  "RedirectHttpToHttps": true,
+  "RedirectToGateway": true
 }

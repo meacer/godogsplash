@@ -35,6 +35,10 @@ type Config struct {
 	SSLCert                string
 	SSLKey                 string
 	ClientTimeoutInMinutes int
+	// Redirects HTTP URLs to HTTPS
+	RedirectHttpToHttps bool
+	// Redirects HTTP URLs to the gateway URL instead of modifying the HTTP page.
+	RedirectToGateway bool
 }
 
 func ReadConfig(c *Config) error {
