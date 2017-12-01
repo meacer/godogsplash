@@ -3,5 +3,6 @@
   "SSLKey": "ssl/key.pem",
   "ClientTimeoutInMinutes": 15,
   "RedirectHttpToHttps": true,
-  "RedirectToGateway": true
+  "RedirectToGateway": true,
+  "GatewayHostname": ""
 }

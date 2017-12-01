@@ -65,8 +65,6 @@ const (
 	gw_address   = "192.168.24.1"
 	gw_port      = 80
 	gw_port_ssl  = 443
-
-	gw_hostname = ""
 )
 
 func _iptables_init_marks() {
@@ -597,6 +595,7 @@ func DisableCaching(w http.ResponseWriter) {
 type HomePageHandler struct {
 	redirect_http_to_https bool
 	redirect_to_gateway    bool
+	gateway_hostname       string
 }
 
 func GetHostname(hostname string, port int) string {
@@ -612,8 +611,8 @@ func (h HomePageHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	redirect_hostname := GetHostname(gw_address, gw_port)
 	// If a hostname is provided, use it instead of the IP address of the gateway
 	// when redirecting.
-	if len(gw_hostname) > 0 {
-		redirect_hostname = GetHostname(gw_hostname, gw_port)
+	if len(h.gateway_hostname) > 0 {
+		redirect_hostname = GetHostname(h.gateway_hostname, gw_port)
 	}
 	if h.redirect_http_to_https && r.TLS == nil {
 		redirect_url := fmt.Sprintf("https://%v/", redirect_hostname)
@@ -814,7 +813,8 @@ func main() {
 	server := http.Server{
 		Addr: fmt.Sprintf(":%d", gw_port),
 		Handler: HomePageHandler{redirect_http_to_https: config.RedirectHttpToHttps,
-			redirect_to_gateway: config.RedirectToGateway},
+			redirect_to_gateway: config.RedirectToGateway,
+			gateway_hostname:    config.GatewayHostname},
 	}
 	err = server.ListenAndServe()
 	if err != nil {

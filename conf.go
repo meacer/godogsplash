@@ -39,6 +39,8 @@ type Config struct {
 	RedirectHttpToHttps bool
 	// Redirects HTTP URLs to the gateway URL instead of modifying the HTTP page.
 	RedirectToGateway bool
+	// Hostname for the gateway. If empty, gateway IP address is used.
+	GatewayHostname string
 }
 
 func ReadConfig(c *Config) error {
