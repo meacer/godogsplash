@@ -612,10 +612,7 @@ func (h HomePageHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	// If not already on the gateway URL, redirect there:
 	if redirect_to_gateway && r.Host != fmt.Sprintf("%v:%v", gw_address, gw_port) {
-		// TODO: Don't assume the original URL is http. This should use r.URL.Scheme
-		// instead.
-		current_url := fmt.Sprintf("http://%v%v", r.Host, r.URL.Path)
-		http.Redirect(w, r, fmt.Sprintf("http://%v:%v/?redirect=%v", gw_address, gw_port, current_url), 301)
+		http.Redirect(w, r, fmt.Sprintf("http://%v:%v/", gw_address, gw_port), 301)
 		return
 	}
 
