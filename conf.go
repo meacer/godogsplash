@@ -41,6 +41,8 @@ type Config struct {
 	RedirectToGateway bool
 	// Hostname for the gateway. If empty, gateway IP address is used.
 	GatewayHostname string
+	// Name of the gateway. This is used in the login page.
+	GatewayName string
 }
 
 func ReadConfig(c *Config) error {

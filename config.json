@@ -4,5 +4,6 @@
   "ClientTimeoutInMinutes": 15,
   "RedirectHttpToHttps": true,
   "RedirectToGateway": true,
-  "GatewayHostname": ""
+  "GatewayHostname": "",
+  "GatewayName": "Test Captive Portal"
 }

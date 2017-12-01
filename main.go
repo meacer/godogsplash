@@ -596,6 +596,7 @@ type HomePageHandler struct {
 	redirect_http_to_https bool
 	redirect_to_gateway    bool
 	gateway_hostname       string
+	gateway_title          string
 }
 
 func GetHostname(hostname string, port int) string {
@@ -616,7 +617,7 @@ func (h HomePageHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if h.redirect_http_to_https && r.TLS == nil {
 		redirect_url := fmt.Sprintf("https://%v/", redirect_hostname)
-		log.Printf("Redirecting to HTTPS, current scheme: %v (%v)\n", r.URL.Scheme, redirect_url)
+		log.Printf("Redirecting to HTTPS (%v)\n", redirect_url)
 		http.Redirect(w, r, redirect_url, 301)
 		return
 	}
@@ -639,7 +640,8 @@ func (h HomePageHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "text/html")
-	w.Write([]byte("<html><title>Captive Portal</title><body onunload=''><h3>TestCaptivePortal</h3>"))
+	w.Write([]byte("<html><title>Captive Portal</title>"))
+	w.Write([]byte(fmt.Sprintf("<body onunload=''><h3>%v</h3>", h.gateway_title)))
 
 	params, _ := url.ParseQuery(r.URL.RawQuery)
 	action := AuthAction_None
@@ -734,7 +736,7 @@ func FileExists(path string) bool {
 	return false
 }
 
-func RunHttpsServer(cert_path string, key_path string) {
+func RunHttpsServer(handler HomePageHandler, cert_path string, key_path string) {
 	cfg := &tls.Config{}
 	cert, err := tls.LoadX509KeyPair(cert_path, key_path)
 	if err != nil {
@@ -745,7 +747,7 @@ func RunHttpsServer(cert_path string, key_path string) {
 
 	https_server := http.Server{
 		Addr:      fmt.Sprintf(":%d", gw_port_ssl),
-		Handler:   HomePageHandler{},
+		Handler:   handler,
 		TLSConfig: cfg,
 	}
 	err = https_server.ListenAndServeTLS("", "")
@@ -804,18 +806,21 @@ func main() {
 
 	go ClientTimeoutCheck(config.ClientTimeoutInMinutes)
 
+	handler := HomePageHandler{redirect_http_to_https: config.RedirectHttpToHttps,
+		redirect_to_gateway: config.RedirectToGateway,
+		gateway_hostname:    config.GatewayHostname,
+		gateway_title:       config.GatewayName,
+	}
+
 	if run_https {
 		log.Printf("Starting HTTPS server at port %v\n", gw_port_ssl)
-		go RunHttpsServer(config.SSLCert, config.SSLKey)
+		go RunHttpsServer(handler, config.SSLCert, config.SSLKey)
 	}
 
 	log.Printf("Starting HTTP server at port %v\n", gw_port)
 	server := http.Server{
-		Addr: fmt.Sprintf(":%d", gw_port),
-		Handler: HomePageHandler{redirect_http_to_https: config.RedirectHttpToHttps,
-			redirect_to_gateway: config.RedirectToGateway,
-			gateway_hostname:    config.GatewayHostname},
-	}
+		Addr:    fmt.Sprintf(":%d", gw_port),
+		Handler: handler}
 	err = server.ListenAndServe()
 	if err != nil {
 		fmt.Printf("Could not start HTTP server: %v\n", err)
