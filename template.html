@@ -1,0 +1,31 @@
+<html>
+<title>Captive Portal</title>
+<body>
+<h3>{{ .Title }}</h3>
+
+{{ if $.Message }}
+  <div><b>{{ .Message }}</b></div><br>
+{{ end }}
+
+<a href="?action=login">LOGIN</a><br><br>
+<a href="?action=logout">LOGOUT</a><br><br>
+
+<pre>
+{{ if .LoginTime.IsZero }}
+<b>Not logged in</b>
+{{ else }}
+Login time    : <b>{{ .LoginTime }}</b>
+Remaining time: <b>{{ .RemainingTimeInMinutes }} minutes</b>
+{{ end }}
+
+Current time  : <b>{{ .CurrentTime }}</b>
+Client IP     : <b>{{ .Client.Ip }}</b>
+Client MAC    : <b>{{ .Client.Mac }}</b>
+Client ID     : <b>{{ .Client.Idx }}</b>
+</pre>
+
+In order to view this page without an SSL error,
+you can <a href='/cert.pem'>download the SSL certificate</a>
+and install it.
+</body>
+</html>

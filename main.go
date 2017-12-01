@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"crypto/tls"
 	"fmt"
+	"html/template"
 	"log"
 	"net/http"
 	"net/url"
@@ -43,9 +44,9 @@ const (
 )
 
 type Client struct {
-	ip        string
-	mac       string
-	idx       int
+	Ip        string
+	Mac       string
+	Idx       int
 	auth_time time.Time
 }
 
@@ -549,34 +550,34 @@ func iptables_fw_destroy_mention_with_reader(table string, chain string, mention
 func iptables_fw_access(client Client, auth_action int) int {
 	rc := 0
 	if auth_action == AuthAction_Auth {
-		log.Printf("Authenticating %v %v %v\n", client.ip, client.mac, client.idx)
+		log.Printf("Authenticating %v %v %v\n", client.Ip, client.Mac, client.Idx)
 		/* This rule is for marking upload (outgoing) packets, and for upload byte counting */
-		rc |= iptables_do_command("-t mangle -A "+CHAIN_OUTGOING+" -s %s -m mac --mac-source %s -j MARK %s 0x%x%x", client.ip, client.mac, markop, client.idx+10, FW_MARK_AUTHENTICATED)
-		rc |= iptables_do_command("-t mangle -A "+CHAIN_INCOMING+" -d %s -j MARK %s 0x%x%x", client.ip, markop, client.idx+10, FW_MARK_AUTHENTICATED)
+		rc |= iptables_do_command("-t mangle -A "+CHAIN_OUTGOING+" -s %s -m mac --mac-source %s -j MARK %s 0x%x%x", client.Ip, client.Mac, markop, client.Idx+10, FW_MARK_AUTHENTICATED)
+		rc |= iptables_do_command("-t mangle -A "+CHAIN_INCOMING+" -d %s -j MARK %s 0x%x%x", client.Ip, markop, client.Idx+10, FW_MARK_AUTHENTICATED)
 
 		/* This rule is just for download (incoming) byte counting, see iptables_fw_counters_update() */
-		rc |= iptables_do_command("-t mangle -A "+CHAIN_INCOMING+" -d %s -j ACCEPT", client.ip)
+		rc |= iptables_do_command("-t mangle -A "+CHAIN_INCOMING+" -d %s -j ACCEPT", client.Ip)
 
 		if rc == 0 {
 			clients_mutex.Lock()
 			client.auth_time = time.Now()
-			clients[client.mac] = client
+			clients[client.Mac] = client
 			clients_mutex.Unlock()
 		}
 		return rc
 	}
 
 	if auth_action == AuthAction_Deauth {
-		log.Printf("De-authenticating %v %v %v\n", client.ip, client.mac, client.idx)
+		log.Printf("De-authenticating %v %v %v\n", client.Ip, client.Mac, client.Idx)
 		/* Remove the authentication rules. */
-		rc |= iptables_do_command("-t mangle -D "+CHAIN_OUTGOING+" -s %s -m mac --mac-source %s -j MARK %s 0x%x%x", client.ip, client.mac, markop, client.idx+10, FW_MARK_AUTHENTICATED)
-		rc |= iptables_do_command("-t mangle -D "+CHAIN_INCOMING+" -d %s -j MARK %s 0x%x%x", client.ip, markop, client.idx+10, FW_MARK_AUTHENTICATED)
-		rc |= iptables_do_command("-t mangle -D "+CHAIN_INCOMING+" -d %s -j ACCEPT", client.ip)
+		rc |= iptables_do_command("-t mangle -D "+CHAIN_OUTGOING+" -s %s -m mac --mac-source %s -j MARK %s 0x%x%x", client.Ip, client.Mac, markop, client.Idx+10, FW_MARK_AUTHENTICATED)
+		rc |= iptables_do_command("-t mangle -D "+CHAIN_INCOMING+" -d %s -j MARK %s 0x%x%x", client.Ip, markop, client.Idx+10, FW_MARK_AUTHENTICATED)
+		rc |= iptables_do_command("-t mangle -D "+CHAIN_INCOMING+" -d %s -j ACCEPT", client.Ip)
 
 		if rc == 0 {
 			clients_mutex.Lock()
 			client.auth_time = time.Time{}
-			clients[client.mac] = client
+			clients[client.Mac] = client
 			clients_mutex.Unlock()
 		}
 		return rc
@@ -597,6 +598,8 @@ type HomePageHandler struct {
 	redirect_to_gateway    bool
 	gateway_hostname       string
 	gateway_title          string
+	// HTML template to generate the home page:
+	tmpl *template.Template
 }
 
 func GetHostname(hostname string, port int) string {
@@ -640,8 +643,6 @@ func (h HomePageHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "text/html")
-	w.Write([]byte("<html><title>Captive Portal</title>"))
-	w.Write([]byte(fmt.Sprintf("<body onunload=''><h3>%v</h3>", h.gateway_title)))
 
 	params, _ := url.ParseQuery(r.URL.RawQuery)
 	action := AuthAction_None
@@ -667,59 +668,55 @@ func (h HomePageHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	clients_mutex.Unlock()
 
+	msg := ""
 	if action == AuthAction_Auth || action == AuthAction_Deauth {
-		msg := ""
+		action_name := ""
 		if action == AuthAction_Auth {
 			log.Printf("Logging in...\n")
-			msg = "Login"
+			action_name = "Login"
 		} else {
 			log.Printf("Logging out...\n")
-			msg = "Logout"
+			action_name = "Logout"
 		}
 		rc := iptables_fw_access(client, action)
 		if rc == 0 {
 			// Update client information. Auth time might have changed.
 			client = clients[client_mac]
-			w.Write([]byte(fmt.Sprintf("<h4>%v successful</h4><br><br>", msg)))
+			msg = fmt.Sprintf("%v successful.", action_name)
 		} else {
-			w.Write([]byte(fmt.Sprintf("%v failed, return code: %v<br>", msg, rc)))
+			msg = fmt.Sprintf("%v failed, return code: %v", action_name, rc)
 		}
-	} else {
-		log.Printf("No auth action\n")
 	}
 
 	clients_mutex.Lock()
 	PrintClients()
 	clients_mutex.Unlock()
 
-	w.Write([]byte("<a href='?action=login'>LOGIN</a><br><br>\n"))
-	w.Write([]byte("<a href='?action=logout'>LOGOUT</a><br><br>\n"))
-	w.Write([]byte("In order to view this page without an SSL error, you can <a href='/cert.pem'>download the SSL certificate</a> and install it.<br><br>\n"))
-	w.Write([]byte("<pre>"))
-
-	if !client.auth_time.IsZero() {
-		w.Write([]byte(fmt.Sprintf("Login time: <b>%v</b><br>", client.auth_time)))
-		w.Write([]byte(fmt.Sprintf("Remaining : <b>%v minutes</b><br>",
-			1+config.ClientTimeoutInMinutes-int(time.Now().Sub(client.auth_time).Minutes()))))
-	} else {
-		w.Write([]byte("<b>Not logged in</b><br>"))
+	type PageData struct {
+		Title                  string
+		Client                 Client
+		LoginTime              time.Time
+		CurrentTime            time.Time
+		RemainingTimeInMinutes int
+		Message                string
 	}
-
-	w.Write([]byte(fmt.Sprintf("Client IP : <b>%v</b><br>", client.ip)))
-	w.Write([]byte(fmt.Sprintf("Client MAC: <b>%v</b><br>", client.mac)))
-	w.Write([]byte(fmt.Sprintf("Client ID : <b>%v</b><br>", client.idx)))
-
-	w.Write([]byte(fmt.Sprintf("Current time: <b>%v</b>", time.Now())))
-	w.Write([]byte("</pre>"))
-	w.Write([]byte("</body></html>"))
+	pd := PageData{
+		Title:                  h.gateway_title,
+		LoginTime:              client.auth_time,
+		Client:                 client,
+		RemainingTimeInMinutes: config.ClientTimeoutInMinutes - int(time.Now().Sub(client.auth_time).Minutes()),
+		CurrentTime:            time.Now(),
+		Message:                msg,
+	}
+	h.tmpl.Execute(w, pd)
 }
 
 func PrintClients() {
 	fmt.Printf("=== CLIENT LIST ===\n")
 	for _, client := range clients {
-		fmt.Printf("Client #%v\n", client.idx)
-		fmt.Printf("IP : %s\n", client.ip)
-		fmt.Printf("MAC: %s\n", client.mac)
+		fmt.Printf("Client #%v\n", client.Idx)
+		fmt.Printf("IP : %s\n", client.Ip)
+		fmt.Printf("MAC: %s\n", client.Mac)
 		if !client.auth_time.IsZero() {
 			fmt.Printf("Auth Time: %v\n", client.auth_time)
 		} else {
@@ -766,7 +763,7 @@ func ClientTimeoutCheck(client_timeout_in_minutes int) {
 
 		for _, client := range client_list {
 			if !client.auth_time.IsZero() && int(now.Sub(client.auth_time).Minutes()) > client_timeout_in_minutes {
-				log.Printf("Client %v timeout, deauthenticating.\n", client.mac)
+				log.Printf("Client %v timeout, deauthenticating.\n", client.Mac)
 				iptables_fw_access(client, AuthAction_Deauth)
 			}
 		}
@@ -779,6 +776,8 @@ func main() {
 		fmt.Printf("Could not load configuration: %v\n", err)
 		return
 	}
+
+	tmpl := template.Must(template.ParseFiles("./template.html"))
 
 	iptables_fw_destroy()
 	iptables_init()
@@ -806,10 +805,12 @@ func main() {
 
 	go ClientTimeoutCheck(config.ClientTimeoutInMinutes)
 
-	handler := HomePageHandler{redirect_http_to_https: config.RedirectHttpToHttps,
-		redirect_to_gateway: config.RedirectToGateway,
-		gateway_hostname:    config.GatewayHostname,
-		gateway_title:       config.GatewayName,
+	handler := HomePageHandler{
+		redirect_http_to_https: config.RedirectHttpToHttps,
+		redirect_to_gateway:    config.RedirectToGateway,
+		gateway_hostname:       config.GatewayHostname,
+		gateway_title:          config.GatewayName,
+		tmpl:                   tmpl,
 	}
 
 	if run_https {
