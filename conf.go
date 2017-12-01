@@ -1,5 +1,10 @@
 package main
 
+import (
+	"encoding/json"
+	"io/ioutil"
+)
+
 const (
 	TARGET_DROP int = iota
 	TARGET_REJECT
@@ -24,4 +29,20 @@ type FirewallRuleset struct {
 
 func parse_firewall_ruleset(rulesetname string) {
 
+}
+
+type Config struct {
+	SSLCert string
+	SSLKey  string
+}
+
+func ReadConfig() (Config, error) {
+	raw, err := ioutil.ReadFile("./config.json")
+	if err != nil {
+		panic("Could not read configuration")
+	}
+
+	var c Config
+	err = json.Unmarshal(raw, &c)
+	return c, err
 }

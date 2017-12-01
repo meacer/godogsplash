@@ -1,0 +1,4 @@
+{
+  "SSLCert": "ssl/cert.pem",
+  "SSLKey": "ssl/key.pem",
+}

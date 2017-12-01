@@ -68,7 +68,7 @@ const (
 	// Redirects HTTP URLs to the gateway URL instead of modifying the HTTP page.
 	redirect_to_gateway       = true
 	client_timeout_in_minutes = 15
-	gw_hostname = ""
+	gw_hostname               = ""
 )
 
 func _iptables_init_marks() {
@@ -692,7 +692,7 @@ func (h HomePageHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	w.Write([]byte("<a href='?action=login'>LOGIN</a><br><br>\n"))
 	w.Write([]byte("<a href='?action=logout'>LOGOUT</a><br><br>\n"))
-	w.Write([]byte("In order to view this page without an SSL error, <a href='/cert.pem'>download SSL certificate</a> and install it.<br><br>\n"))
+	w.Write([]byte("In order to view this page without an SSL error, you can <a href='/cert.pem'>download the SSL certificate</a> and install it.<br><br>\n"))
 	w.Write([]byte("<pre>"))
 
 	if !client.auth_time.IsZero() {
@@ -734,9 +734,9 @@ func FileExists(path string) bool {
 	return false
 }
 
-func RunHttpsServer() {
+func RunHttpsServer(cert_path string, key_path string) {
 	cfg := &tls.Config{}
-	cert, err := tls.LoadX509KeyPair("ssl/cert.pem", "ssl/key_decrypted.pem")
+	cert, err := tls.LoadX509KeyPair(cert_path, key_path)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -772,6 +772,12 @@ func ClientTimeoutCheck() {
 }
 
 func main() {
+	config, err := ReadConfig()
+	if err != nil {
+		fmt.Printf("Could not load configuration: %v\n", err)
+		return
+	}
+
 	iptables_fw_destroy()
 	iptables_init()
 	go func() {
@@ -787,12 +793,12 @@ func main() {
 	log.Println("Initialized iptables rules")
 
 	run_https := true
-	if !FileExists("ssl/cert.pem") {
-		log.Println("ssl/cert.pem doesn't exist, not running HTTPS server")
+	if !FileExists(config.SSLCert) {
+		log.Printf("SSL certificate %v doesn't exist, not running HTTPS server\n", config.SSLCert)
 		run_https = false
 	}
-	if !FileExists("ssl/key.pem") {
-		log.Println("ssl/key.pem doesn't exist, not running HTTPS server")
+	if !FileExists(config.SSLKey) {
+		log.Printf("SSL key %v doesn't exist, not running HTTPS server\n", config.SSLKey)
 		run_https = false
 	}
 
@@ -800,7 +806,7 @@ func main() {
 
 	if run_https {
 		log.Printf("Starting HTTPS server at port %v\n", gw_port_ssl)
-		go RunHttpsServer()
+		go RunHttpsServer(config.SSLCert, config.SSLKey)
 	}
 
 	log.Printf("Starting HTTP server at port %v\n", gw_port)
@@ -808,7 +814,7 @@ func main() {
 		Addr:    fmt.Sprintf(":%d", gw_port),
 		Handler: HomePageHandler{},
 	}
-	err := server.ListenAndServe()
+	err = server.ListenAndServe()
 	if err != nil {
 		fmt.Printf("Could not start HTTP server: %v\n", err)
 		return
