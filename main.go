@@ -64,10 +64,11 @@ const (
 	gw_port      = 80
 	gw_port_ssl  = 443
 	// Redirects HTTP URLs to HTTPS
-	redirect_http_to_https = false
+	redirect_http_to_https = true
 	// Redirects HTTP URLs to the gateway URL instead of modifying the HTTP page.
-	redirect_to_gateway       = false
+	redirect_to_gateway       = true
 	client_timeout_in_minutes = 15
+	gw_hostname = ""
 )
 
 func _iptables_init_marks() {
@@ -597,22 +598,43 @@ func DisableCaching(w http.ResponseWriter) {
 
 type HomePageHandler struct{}
 
+func GetHostname(hostname string, port int) string {
+	if port == 80 || port == 443 {
+		return hostname
+	}
+	return fmt.Sprintf("%v:%v", hostname, port)
+}
+
 func (h HomePageHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	DisableCaching(w)
-	if redirect_http_to_https {
-		http.Redirect(w, r, fmt.Sprintf("https://%v:%v/", gw_address, gw_port_ssl), 301)
+
+	redirect_hostname := GetHostname(gw_address, gw_port)
+	// If a hostname is provided, use it instead of the IP address of the gateway
+	// when redirecting.
+	if len(gw_hostname) > 0 {
+		redirect_hostname = GetHostname(gw_hostname, gw_port)
+	}
+	if redirect_http_to_https && r.TLS == nil {
+		redirect_url := fmt.Sprintf("https://%v/", redirect_hostname)
+		log.Printf("Redirecting to HTTPS, current scheme: %v (%v)\n", r.URL.Scheme, redirect_url)
+		http.Redirect(w, r, redirect_url, 301)
 		return
 	}
+	if redirect_to_gateway && r.Host != redirect_hostname {
+		// If not already redirected, do the redirect:
+		// TODO: Don't assume the original URL is http. These should use r.URL.Scheme
+		// instead.
+		redirect_url := fmt.Sprintf("http://%v/", redirect_hostname)
+		log.Printf("Redirecting to hostname (%v)\n", redirect_url)
+		http.Redirect(w, r, redirect_url, 301)
+		return
+	}
+
 	if r.URL.Path == "/cert.pem" {
 		DisableCaching(w)
 		w.Header().Set("Content-Type", "application/x-pem-file; charset=utf-8")
 		w.Header().Set("Content-Disposition", "attachment; filename=\"cert.pem\"")
 		http.ServeFile(w, r, "ssl/cert.pem")
-		return
-	}
-	// If not already on the gateway URL, redirect there:
-	if redirect_to_gateway && r.Host != fmt.Sprintf("%v:%v", gw_address, gw_port) {
-		http.Redirect(w, r, fmt.Sprintf("http://%v:%v/", gw_address, gw_port), 301)
 		return
 	}
 
