@@ -25,6 +25,8 @@ var (
 
 	markop   = "--or_mark"
 	markmask = ""
+
+	config Config
 )
 
 const (
@@ -66,9 +68,8 @@ const (
 	// Redirects HTTP URLs to HTTPS
 	redirect_http_to_https = true
 	// Redirects HTTP URLs to the gateway URL instead of modifying the HTTP page.
-	redirect_to_gateway       = true
-	client_timeout_in_minutes = 15
-	gw_hostname               = ""
+	redirect_to_gateway = true
+	gw_hostname         = ""
 )
 
 func _iptables_init_marks() {
@@ -698,7 +699,7 @@ func (h HomePageHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if !client.auth_time.IsZero() {
 		w.Write([]byte(fmt.Sprintf("Login time: <b>%v</b><br>", client.auth_time)))
 		w.Write([]byte(fmt.Sprintf("Remaining : <b>%v minutes</b><br>",
-			1+int(client_timeout_in_minutes-time.Now().Sub(client.auth_time).Minutes()))))
+			1+config.ClientTimeoutInMinutes-int(time.Now().Sub(client.auth_time).Minutes()))))
 	} else {
 		w.Write([]byte("<b>Not logged in</b><br>"))
 	}
@@ -754,7 +755,7 @@ func RunHttpsServer(cert_path string, key_path string) {
 	}
 }
 
-func ClientTimeoutCheck() {
+func ClientTimeoutCheck(client_timeout_in_minutes int) {
 	for range time.Tick(time.Minute * 1) {
 		now := time.Now()
 		fmt.Printf("ClientTimeoutCheck at %v\n", now)
@@ -763,7 +764,7 @@ func ClientTimeoutCheck() {
 		clients_mutex.Unlock()
 
 		for _, client := range client_list {
-			if !client.auth_time.IsZero() && now.Sub(client.auth_time).Minutes() > client_timeout_in_minutes {
+			if !client.auth_time.IsZero() && int(now.Sub(client.auth_time).Minutes()) > client_timeout_in_minutes {
 				log.Printf("Client %v timeout, deauthenticating.\n", client.mac)
 				iptables_fw_access(client, AuthAction_Deauth)
 			}
@@ -772,7 +773,7 @@ func ClientTimeoutCheck() {
 }
 
 func main() {
-	config, err := ReadConfig()
+	err := ReadConfig(&config)
 	if err != nil {
 		fmt.Printf("Could not load configuration: %v\n", err)
 		return
@@ -802,7 +803,7 @@ func main() {
 		run_https = false
 	}
 
-	go ClientTimeoutCheck()
+	go ClientTimeoutCheck(config.ClientTimeoutInMinutes)
 
 	if run_https {
 		log.Printf("Starting HTTPS server at port %v\n", gw_port_ssl)
